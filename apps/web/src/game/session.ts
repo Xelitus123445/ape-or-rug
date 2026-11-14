@@ -17,6 +17,7 @@ import {
   generateRound,
   launchCoin,
   roundHash,
+  roundProfiles,
   snapshot,
   stepCoin,
   toHex,
@@ -194,11 +195,12 @@ export class GameSession {
     this.revealedSeed = null;
     const key = new RoundKey(seed, this.roundId);
     const taken = new Set<number>();
+    const profiles = roundProfiles(key, this.engine.config.coinsPerRound);
     this.streams = [];
     this.coins = [];
     for (let i = 0; i < this.engine.config.coinsPerRound; i++) {
       const stream = new CoinStream(key, i);
-      const state = launchCoin(stream);
+      const state = launchCoin(profiles[i]!);
       this.streams.push(stream);
       this.coins.push({ index: i, meta: cosmetics(stream, taken), state, history: [1], records: [snapshot(state)], marks: [], lastAlivePrice: state.price });
     }

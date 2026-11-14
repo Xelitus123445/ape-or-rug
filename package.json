@@ -4,6 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@12.18.0",
   "scripts": {
+    "dev": "pnpm --filter @ape/web dev",
     "test": "vitest run",
     "test:browser": "node packages/engine/tools/browser-check.ts",
     "test:stream": "node packages/engine/tools/stream-uniformity.ts",

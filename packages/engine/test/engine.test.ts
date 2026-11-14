@@ -35,11 +35,15 @@ describe("round generation", () => {
 
   it("produces well-formed coin lives", () => {
     const profiles = [0, 0, 0];
+    const orders = new Set<string>();
     let events = 0;
     let graduated = 0;
     for (let i = 0; i < 400; i++) {
       const round = generateRound(engine, seedOf(1000 + i), `r${i}`);
       expect(round.coins.length).toBe(3);
+      // Every round has exactly one degen, one mid and one runner.
+      expect(round.coins.map((c) => c.profile).sort()).toEqual([0, 1, 2]);
+      orders.add(round.coins.map((c) => c.profile).join(""));
       for (const coin of round.coins) {
         profiles[coin.profile]!++;
         const ticks = coin.ticks;
@@ -84,7 +88,9 @@ describe("round generation", () => {
         if (wasGraduated) graduated++;
       }
     }
-    for (const n of profiles) expect(n).toBeGreaterThan(300);
+    for (const n of profiles) expect(n).toBe(400);
+    // All six orders turn up, so no screen position is tied to a profile.
+    expect(orders.size).toBe(6);
     expect(events).toBeGreaterThan(500);
     expect(graduated).toBeGreaterThan(10);
   });
@@ -95,7 +101,7 @@ describe("round generation", () => {
     const key = new RoundKey(seed, "live");
     for (const coin of round.coins) {
       const stream = new CoinStream(key, coin.coinIndex);
-      const c = launchCoin(stream);
+      const c = launchCoin(coin.profile);
       for (let t = 1; t < coin.ticks.length; t++) {
         stepCoin(engine, stream, c);
         expect(c.price).toBe(coin.ticks[t]!.price);

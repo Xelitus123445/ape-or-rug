@@ -108,7 +108,8 @@ export class CoinStream {
   private readonly msg = new Uint8Array(HMAC_MAX_MESSAGE);
   private readonly prefixLen: number;
 
-  constructor(key: RoundKey, coinIndex: number) {
+  /** `coinIndex` is the coin's number, or the label "p" for the round's profile draw. */
+  constructor(key: RoundKey, coinIndex: number | "p") {
     this.hmac = key.hmac;
     const prefix = asciiBytes(`${key.roundId}:${coinIndex}:`);
     this.msg.set(prefix);
@@ -173,11 +174,34 @@ export interface CoinState {
 const scratchMain = new Int32Array(8);
 const scratchExtra = new Int32Array(8);
 
-/** Draws the coin's profile from its tick-0 digest and returns the launch state. */
-export function launchCoin(stream: CoinStream): CoinState {
+const PROFILE_ORDERS: readonly (readonly number[])[] = [
+  [0, 1, 2],
+  [0, 2, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [2, 0, 1],
+  [2, 1, 0],
+];
+
+/**
+ * Profiles of a round's coins: one degen, one mid and one runner, in an order
+ * drawn from the round stream "roundId:p:0:n" (3-bit chunks, first chunk
+ * below 6 picks one of the six orders). Coin i gets order[i mod 3].
+ */
+export function roundProfiles(key: RoundKey, coins: number): number[] {
+  const stream = new CoinStream(key, "p");
   stream.digest(0, 0, scratchMain);
-  let profile = pickFromWords(scratchMain, 0, 8, 2, 3);
-  if (profile < 0) profile = pickFromOverflow(stream, 0, 1, 1, 2, 3, scratchExtra);
+  let pick = pickFromWords(scratchMain, 0, 8, 3, 6);
+  if (pick < 0) pick = pickFromOverflow(stream, 0, 1, 1, 3, 6, scratchExtra);
+  const order = PROFILE_ORDERS[pick]!;
+  const out: number[] = [];
+  for (let i = 0; i < coins; i++) out.push(order[i % 3]!);
+  return out;
+}
+
+/** Launch state of a coin with the given profile: tick 0, price 1.00x. */
+export function launchCoin(profile: number): CoinState {
+  if (profile !== 0 && profile !== 1 && profile !== 2) throw new Error("launchCoin: bad profile");
   return {
     profile,
     status: STATUS_ALIVE,
@@ -280,9 +304,10 @@ export function snapshot(c: CoinState): TickRecord {
 export function generateRound(engine: Engine, serverSeed: Uint8Array, roundId: string): Round {
   const key = new RoundKey(serverSeed, roundId);
   const coins: CoinPath[] = [];
+  const profiles = roundProfiles(key, engine.config.coinsPerRound);
   for (let i = 0; i < engine.config.coinsPerRound; i++) {
     const stream = new CoinStream(key, i);
-    const c = launchCoin(stream);
+    const c = launchCoin(profiles[i]!);
     const ticks: TickRecord[] = [snapshot(c)];
     while (c.status === STATUS_ALIVE) {
       stepCoin(engine, stream, c);

@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CoinStream, RoundKey } from "../src/engine.ts";
+import { CoinStream, RoundKey, roundProfiles } from "../src/engine.ts";
 import { HmacKey, asciiBytes, fromHex, sha256, toHex } from "../src/sha256.ts";
 
 function bytes(n: number, salt: number): Uint8Array {
@@ -63,6 +63,24 @@ describe("coin stream", () => {
           for (let i = 0; i < 8; i++) expect(words[i]! >>> 0).toBe(expected.readUInt32BE(i * 4));
         }
       }
+    }
+  });
+
+  it("draws profiles from HMAC-SHA256(serverSeed, roundId:p:0:0)", () => {
+    const orders = ["012", "021", "102", "120", "201", "210"];
+    for (let i = 0; i < 200; i++) {
+      const seed = bytes(32, 900 + i);
+      const digest = createHmac("sha256", seed).update(`r${i}:p:0:0`).digest();
+      // First 3-bit chunk below 6, reading each 32-bit word from the top, ten chunks per word.
+      let pick = -1;
+      for (let w = 0; w < 8 && pick < 0; w++) {
+        const word = digest.readUInt32BE(w * 4);
+        for (let shift = 29; shift >= 0 && pick < 0; shift -= 3) {
+          const v = (word >>> shift) & 7;
+          if (v < 6) pick = v;
+        }
+      }
+      expect(roundProfiles(new RoundKey(seed, `r${i}`), 3).join("")).toBe(orders[pick]);
     }
   });
 

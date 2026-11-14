@@ -56,8 +56,7 @@ describe("hold exactly n ticks (10.5 #7)", () => {
     for (let p = 0; p < PATHS; p++) {
       const seed = sha256(new Uint8Array([p & 255, (p >>> 8) & 255, (p >>> 16) & 255, 201]));
       const stream = new CoinStream(new RoundKey(seed, "exact"), 0);
-      const c = launchCoin(stream);
-      c.profile = PROFILE;
+      const c = launchCoin(PROFILE);
       for (let n = 1; n <= N; n++) {
         stepCoin(engine, stream, c);
         if (c.status !== STATUS_ALIVE) break;

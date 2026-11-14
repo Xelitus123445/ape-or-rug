@@ -20,6 +20,7 @@ Requires Node 24 or newer and pnpm.
 | Command | What it does |
 | --- | --- |
 | `pnpm install` | Install dependencies |
+| `pnpm dev` | Start the single-player prototype at http://127.0.0.1:5173 |
 | `pnpm test` | Unit, property and exact tests (about 10 s) |
 | `pnpm typecheck` | TypeScript strict check |
 | `pnpm sim --bets 5000000 --report docs/reports/m1-rtp.md` | Full strategy simulation (about 20 min on 10 threads) |

@@ -17,6 +17,7 @@ import {
   entryFee,
   launchCoin,
   payoutCap,
+  roundProfiles,
   sha256,
   stepCoin,
   unitsFor,
@@ -208,11 +209,12 @@ export function simulateChunk(
   for (let r = 0; r < rounds; r++) {
     const round = first + r;
     const key = new RoundKey(seedForRound(baseSeed, round), roundIdFor(round));
+    const profiles = roundProfiles(key, coinsPerRound);
     let roundLife = 0;
 
     for (let coin = 0; coin < coinsPerRound; coin++) {
       const stream = new CoinStream(key, coin);
-      const c = launchCoin(stream);
+      const c = launchCoin(profiles[coin]!);
       rng = (Math.imul(round * coinsPerRound + coin + 1, 0x9e3779b1) ^ 0x5bd1e995) | 0;
       if (rng === 0) rng = 1;
       const randomEntryTick = 1 + (nextRandom() % RANDOM_ENTRY_SPAN);

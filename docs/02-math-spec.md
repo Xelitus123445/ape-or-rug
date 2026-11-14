@@ -135,10 +135,13 @@ position only.
   `2e-10` for the type, `3e-12` for the duration), sampling continues over
   all eight words of further digests: `n = 1, 3, 5, …` for the event type,
   `n = 2, 4, 6, …` for the duration.
-- Tick 0 has no price move. Its digest `n = 0` gives the coin's profile
-  (2-bit chunks over all eight words, first chunk below 3 wins; overflow in
-  `n = 1, 2, …`). Each coin draws its profile independently, so a round can
-  hold two coins of the same profile.
+- Tick 0 has no price move. Every round has exactly one degen, one mid and
+  one runner coin, so a newcomer always sees the same three choices. Their
+  order comes from the round digest `HMAC-SHA256(serverSeed, roundId:p:0:0)`:
+  3-bit chunks, ten per word read from the top, first chunk below 6 picks
+  one of the six orders `012, 021, 102, 120, 201, 210` (0 = degen, 1 = mid,
+  2 = runner); overflow continues in `roundId:p:0:1, 2, …`. Coin `i` gets
+  the `i`-th profile of that order.
 - `roundId` is 1–48 characters of `[A-Za-z0-9_-]`; `serverSeed` is exactly
   32 bytes.
 
