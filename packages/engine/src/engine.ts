@@ -2,6 +2,7 @@
 // Nothing here knows about players, positions or balances.
 
 import {
+  BPS,
   DEFAULT_CONFIG,
   EVENT_NONE,
   PRICE_SCALE,
@@ -36,8 +37,34 @@ export function loadTables(lines: readonly string[] = TABLE_LINES, checksum: str
     if (parts.length !== 4 || parts[0] !== String(i)) throw new Error(`growth table ${i}: bad header`);
     const g = parts[3]!.split(",").map((x) => BigInt(x));
     if (g.length !== TABLE_SIZE) throw new Error(`growth table ${i}: wrong size`);
-    return { H: BigInt(parts[1]!), sigmaPpb: BigInt(parts[2]!), g };
+    // Frozen: once the checksum has passed, nothing in the process can edit a table.
+    return Object.freeze({ H: BigInt(parts[1]!), sigmaPpb: BigInt(parts[2]!), g: Object.freeze(g) });
   });
+}
+
+function isCount(x: unknown, min: number, max: number): boolean {
+  return typeof x === "number" && Number.isInteger(x) && x >= min && x <= max;
+}
+
+/** Rejects configs the engine or the ledger cannot run correctly. */
+export function validateConfig(config: EngineConfig): void {
+  if (!isCount(config.maxTicks, 1, 9_999_999)) throw new Error("maxTicks must be a whole number of ticks, 1 or more");
+  if (!isCount(config.coinsPerRound, 1, 9)) throw new Error("coinsPerRound must be a whole number from 1 to 9");
+  if (!isCount(config.eventMinTicks, 1, 9_999_999)) throw new Error("eventMinTicks must be a whole number, 1 or more");
+  if (!isCount(config.eventMaxTicks, config.eventMinTicks, config.eventMinTicks + 31)) {
+    throw new Error("eventMaxTicks must be a whole number, at least eventMinTicks and at most 31 above it");
+  }
+  if (!isCount(config.ticksPerSecond, 1, 1000)) throw new Error("ticksPerSecond must be a whole number from 1 to 1000");
+  if (typeof config.entryFeeBps !== "bigint" || config.entryFeeBps < 0n || config.entryFeeBps >= BPS) {
+    throw new Error("entryFeeBps must be from 0 to 9999");
+  }
+  if (typeof config.maxPayoutMult !== "bigint" || config.maxPayoutMult < 1n) throw new Error("maxPayoutMult must be 1 or more");
+  if (typeof config.minStake !== "bigint" || config.minStake < 1n) throw new Error("minStake must be 1 or more");
+  if (typeof config.maxStake !== "bigint" || config.maxStake < config.minStake) throw new Error("maxStake must be at least minStake");
+  if (config.eventStart.den <= 0n || config.eventStart.num < 0n || config.eventStart.num >= config.eventStart.den) {
+    throw new Error("eventStart must be a probability below 1");
+  }
+  if (config.graduation.price <= PRICE_SCALE) throw new Error("graduation price must be above 1.00x");
 }
 
 export interface Engine {
@@ -57,6 +84,7 @@ let cachedTables: ParsedTable[] | null = null;
  * hazard it was built for.
  */
 export function createEngine(config: EngineConfig = DEFAULT_CONFIG): Engine {
+  validateConfig(config);
   if (cachedTables === null) cachedTables = loadTables();
   const tables = cachedTables;
   const params = regimeParams(config);
@@ -70,18 +98,19 @@ export function createEngine(config: EngineConfig = DEFAULT_CONFIG): Engine {
     hazard.push(Number(t.H));
   }
   const range = config.eventMaxTicks - config.eventMinTicks + 1;
-  if (range < 1 || range > 32) throw new Error("event duration range must be 1..32 ticks");
-  if (config.maxTicks < 1 || config.maxTicks > 9_999_999) throw new Error("maxTicks out of range");
-  if (config.coinsPerRound < 1 || config.coinsPerRound > 9) throw new Error("coinsPerRound out of range");
   const start = (TWO_32 * config.eventStart.num) / config.eventStart.den;
-  if (start < 0n || start >= TWO_32) throw new Error("eventStart out of range");
-  return {
+  return Object.freeze({
     config,
-    hazard,
-    tables: tables.map((t) => t.g),
+    hazard: Object.freeze(hazard),
+    tables: Object.freeze(tables.map((t) => t.g)),
     eventStartThreshold: Number(start),
     eventDurationRange: range,
-  };
+  });
+}
+
+function checkSeedAndId(serverSeed: Uint8Array, roundId: string): void {
+  if (!(serverSeed instanceof Uint8Array) || serverSeed.length !== 32) throw new Error("serverSeed must be a Uint8Array of 32 bytes");
+  if (typeof roundId !== "string" || !ROUND_ID_PATTERN.test(roundId)) throw new Error("roundId must be 1-48 chars of [A-Za-z0-9_-]");
 }
 
 const ROUND_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
@@ -92,8 +121,7 @@ export class RoundKey {
   readonly roundId: string;
 
   constructor(serverSeed: Uint8Array, roundId: string) {
-    if (serverSeed.length !== 32) throw new Error("serverSeed must be 32 bytes");
-    if (!ROUND_ID_PATTERN.test(roundId)) throw new Error("roundId must be 1-48 chars of [A-Za-z0-9_-]");
+    checkSeedAndId(serverSeed, roundId);
     this.hmac = new HmacKey(serverSeed);
     this.roundId = roundId;
   }
@@ -110,6 +138,7 @@ export class CoinStream {
 
   /** `coinIndex` is the coin's number, or the label "p" for the round's profile draw. */
   constructor(key: RoundKey, coinIndex: number | "p") {
+    if (coinIndex !== "p" && !isCount(coinIndex, 0, 9)) throw new Error("coinIndex must be a whole number from 0 to 9");
     this.hmac = key.hmac;
     const prefix = asciiBytes(`${key.roundId}:${coinIndex}:`);
     this.msg.set(prefix);
@@ -335,13 +364,22 @@ export function roundHash(round: Round): string {
   return toHex(sha256(asciiBytes(roundCanonicalText(round))));
 }
 
-/** Commitment published before the round: SHA-256 of the server seed. */
-export function commitOf(serverSeed: Uint8Array): string {
-  return toHex(sha256(serverSeed));
+/**
+ * Commitment published before the round: SHA-256(serverSeed || ":" || roundId).
+ * It covers the round id as well as the seed, because both feed every random
+ * draw: a commit to the seed alone would leave the round id free to choose.
+ */
+export function commitOf(serverSeed: Uint8Array, roundId: string): string {
+  checkSeedAndId(serverSeed, roundId);
+  const tail = asciiBytes(`:${roundId}`);
+  const data = new Uint8Array(serverSeed.length + tail.length);
+  data.set(serverSeed);
+  data.set(tail, serverSeed.length);
+  return toHex(sha256(data));
 }
 
-export function verifyCommit(serverSeed: Uint8Array, commit: string): boolean {
-  return commitOf(serverSeed) === commit.toLowerCase();
+export function verifyCommit(serverSeed: Uint8Array, roundId: string, commit: string): boolean {
+  return typeof commit === "string" && commitOf(serverSeed, roundId) === commit.toLowerCase();
 }
 
 export { STATUS_ALIVE, STATUS_RUGGED, STATUS_SETTLED };

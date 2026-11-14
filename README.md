@@ -24,7 +24,7 @@ Requires Node 24 or newer and pnpm.
 | `pnpm test` | Unit, property and exact tests (about 10 s) |
 | `pnpm typecheck` | TypeScript strict check |
 | `pnpm sim --bets 5000000 --report docs/reports/m1-rtp.md` | Full strategy simulation (about 20 min on 10 threads) |
-| `pnpm sim --bets 100000 --max-waves 1` | Quick simulator smoke run (under a minute) |
+| `pnpm sim --bets 100000 --max-waves 1` | Quick simulator smoke run (under a minute). Too few bets to converge, so it prints the table and ends with FAIL by design |
 | `pnpm test:stream` | Uniformity test of the random stream on 10^8 draws (a few minutes) |
 | `pnpm test:browser` | Recompute the golden rounds in headless Edge/Chrome and compare with Node. Add `-- --manual` to open the printed address in any browser instead |
 | `pnpm gen:tables` | Regenerate growth tables after a config change |

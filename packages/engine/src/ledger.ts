@@ -51,6 +51,7 @@ export interface Position {
 
 export type LedgerError =
   | "bad_stake"
+  | "bad_coin"
   | "stake_below_min"
   | "stake_above_max"
   | "insufficient_balance"
@@ -95,13 +96,16 @@ export class Ledger {
 
   /** Buy at the current tick's price. Rejected unless the coin is alive. */
   buy(coin: number, stake: bigint, coinStatus: number, price: bigint, tick: number): Result<Position> {
-    if (typeof stake !== "bigint") return fail("bad_stake");
+    if (typeof coin !== "number" || !Number.isInteger(coin) || coin < 0 || coin >= this.config.coinsPerRound) return fail("bad_coin");
+    if (typeof stake !== "bigint" || typeof price !== "bigint") return fail("bad_stake");
     if (stake < this.config.minStake) return fail("stake_below_min");
     if (stake > this.config.maxStake) return fail("stake_above_max");
     if (stake > this.balance) return fail("insufficient_balance");
     if (coinStatus !== STATUS_ALIVE) return fail("coin_not_alive");
     if (price <= 0n) return fail("price_too_low");
     const fee = entryFee(this.config, stake);
+    // A fee outside [0, stake] can only come from a broken config; never trade on it.
+    if (fee < 0n || fee > stake) return fail("bad_stake");
     const units = unitsFor(stake - fee, price);
     if (units <= 0n) return fail("price_too_low");
     const pos: Position = {
@@ -142,6 +146,7 @@ export class Ledger {
     if (!pos.open) return fail("position_closed");
     if (typeof bps !== "bigint" || bps < 1n || bps > BPS) return fail("bad_fraction");
     if (coinStatus !== STATUS_ALIVE) return fail("coin_not_alive");
+    if (typeof price !== "bigint" || price <= 0n) return fail("price_too_low");
     const unitsSold = bps === BPS ? pos.units : (pos.units * bps) / BPS;
     if (unitsSold <= 0n) return fail("amount_too_small");
     const capLeft = payoutCap(this.config, pos.stake) - pos.paid;
@@ -160,7 +165,7 @@ export class Ledger {
 
   /** Units that must be sold at `price` to bring total payouts up to the stake, or null if not available. */
   initialsUnits(pos: Position, price: bigint): bigint | null {
-    if (!pos.open || price <= 0n) return null;
+    if (!pos.open || typeof price !== "bigint" || price <= 0n) return null;
     const need = pos.stake - pos.paid;
     if (need <= 0n) return null;
     const units = ceilDiv(need * UNIT_SCALE, price);

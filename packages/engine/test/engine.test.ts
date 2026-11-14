@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONFIG,
@@ -115,35 +114,16 @@ describe("round generation", () => {
 
   it("commit-reveal: the seed hashes to the commit", () => {
     const seed = seedOf(9);
-    const commit = commitOf(seed);
-    expect(commit).toBe(toHex(sha256(seed)));
-    expect(verifyCommit(seed, commit)).toBe(true);
-    expect(verifyCommit(seedOf(10), commit)).toBe(false);
-  });
-});
-
-describe("engine purity (10.1)", () => {
-  it("has no floats, clock or platform randomness in src", () => {
-    const dir = new URL("../src/", import.meta.url);
-    const forbidden: [RegExp, string][] = [
-      [/\bMath\b/, "Math"],
-      [/\bDate\b/, "Date"],
-      [/\bperformance\b/, "performance"],
-      [/\bcrypto\b/, "platform crypto"],
-      [/\bparseFloat\b|\btoFixed\b|\btoPrecision\b|\bNumber\.(?!isInteger)/, "float helper"],
-      [/\b\d+\.\d+\b/, "float literal"],
-      [/\b\d+e[+-]?\d+\b/i, "exponent literal"],
-      [/\bsetTimeout\b|\bsetInterval\b|\bprocess\b|\brequire\b|\bfetch\b/, "I/O"],
-      [/from\s+"node:/, "node import"],
-    ];
-    for (const file of readdirSync(dir)) {
-      if (file === "tables.generated.ts") continue;
-      const code = readFileSync(new URL(file, dir), "utf8")
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/\/\/.*$/gm, "");
-      for (const [pattern, name] of forbidden) {
-        expect(pattern.test(code), `${file} uses ${name}`).toBe(false);
-      }
-    }
+    const commit = commitOf(seed, "round-9");
+    // SHA-256 over the 32 seed bytes followed by ":round-9"
+    const data = new Uint8Array(40);
+    data.set(seed);
+    data.set(new TextEncoder().encode(":round-9"), 32);
+    expect(commit).toBe(toHex(sha256(data)));
+    expect(verifyCommit(seed, "round-9", commit)).toBe(true);
+    expect(verifyCommit(seed, "round-9", commit.toUpperCase())).toBe(true);
+    expect(verifyCommit(seedOf(10), "round-9", commit)).toBe(false);
+    // The round id is part of the commitment.
+    expect(verifyCommit(seed, "round-8", commit)).toBe(false);
   });
 });

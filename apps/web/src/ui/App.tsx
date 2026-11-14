@@ -130,6 +130,8 @@ function VerifyView({ session, onClose }: { session: GameSession; onClose: () =>
   return (
     <Modal title={S.verifyTitle} onClose={onClose}>
       <p>{S.verifyIntro}</p>
+      <div className="mono-label">{S.verifyRoundId}</div>
+      <div className="mono">{session.roundId}</div>
       <div className="mono-label">{S.verifyCommit}</div>
       <div className="mono">{session.commit}</div>
       <div className="mono-label">{S.verifySeed}</div>
@@ -249,6 +251,9 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
               {S.paceNames[p.id]} · {p.ticksPerSecond}/s
             </button>
           ))}
+        </div>
+        <div className="commit muted" title={session.commit}>
+          <Term k="seed">{S.commitLabel}</Term> <code>{session.commit.slice(0, 16)}…</code>
         </div>
       </header>
 

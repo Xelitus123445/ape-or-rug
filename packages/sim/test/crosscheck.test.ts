@@ -9,7 +9,7 @@ describe("simulator vs Ledger", () => {
   it("pays exactly what the Ledger pays for the same actions", () => {
     const engine = createEngine();
     const base = fromHex("00".repeat(31) + "07");
-    const ROUNDS = 120;
+    const ROUNDS = 400;
     const traces: { round: number; coin: number; strategy: number; actions: TraceAction[]; paid: bigint }[] = [];
     simulateChunk(engine, base, 0, ROUNDS, (round, coin, strategy, actions, paid) => {
       traces.push({ round, coin, strategy, actions: [...actions], paid });
@@ -17,6 +17,7 @@ describe("simulator vs Ledger", () => {
     expect(traces.length).toBeGreaterThan(ROUNDS * 3 * 16);
     const seen = new Set<number>();
     let caps = 0;
+    let settled = 0;
 
     const rounds = new Map<number, ReturnType<typeof generateRound>>();
     for (const t of traces) {
@@ -51,8 +52,11 @@ describe("simulator vs Ledger", () => {
       expect(ledger.balance).toBe(10n * STAKE - STAKE + t.paid);
       seen.add(t.strategy);
       if (pos.closedBy === "cap") caps++;
+      if (pos.closedBy === "settled") settled++;
     }
     expect(seen.size).toBe(STRATEGIES.length);
-    expect(caps).toBeGreaterThanOrEqual(0);
+    // The sample must actually exercise the cap and settlement paths.
+    expect(caps).toBeGreaterThan(0);
+    expect(settled).toBeGreaterThan(0);
   });
 });

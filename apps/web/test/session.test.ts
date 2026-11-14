@@ -48,7 +48,7 @@ describe("game session", () => {
       const commit = s.commit;
       playToEnd(s);
       expect(s.phase).toBe("ended");
-      expect(commitOf(fromHex(s.revealedSeed!))).toBe(commit);
+      expect(commitOf(fromHex(s.revealedSeed!), s.roundId)).toBe(commit);
       const v = s.verify()!;
       expect(v.commitOk).toBe(true);
       expect(v.roundOk).toBe(true);

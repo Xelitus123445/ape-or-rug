@@ -118,8 +118,13 @@ position only.
 
 ## 6. Randomness and verification
 
-- Per round the server generates `serverSeed` (32 random bytes) and publishes
-  `commit = SHA-256(serverSeed)` before the round starts.
+- Per round the server generates `serverSeed` (32 random bytes), fixes the
+  `roundId`, and publishes both `roundId` and
+  `commit = SHA-256(serverSeed || ":" || roundId)` before the round starts
+  and before any bet is accepted. The commit covers the round id because the
+  round id feeds every random draw: a commit to the seed alone would let
+  whoever picks the id afterwards pick the round. *(Amended after the M1
+  bug hunt; the first draft committed to the seed only.)*
 - Random numbers come from `HMAC-SHA256(serverSeed, roundId:coinIndex:tick:n)`
   where `n` indexes the digest within the tick. Each draw takes the bits it
   needs from the digest as an unsigned integer. No conversion to floats.
@@ -149,7 +154,9 @@ position only.
   tick gives the same guarantees and makes the 5,000,000-bet simulation of §7
   five times cheaper.)*
 - After the round the server reveals `serverSeed`. The client can recompute
-  the whole round and check it against the commit.
+  the whole round from `serverSeed` and `roundId` and check both against the
+  commit. The seed must not appear in anything that leaves the server before
+  then: state dumps, logs, error reports.
 
 This is a prototype scheme. A production version needs a certified RNG and a
 lab-reviewed design.
@@ -178,7 +185,15 @@ Pass criteria:
   strategies that hit the cap often
 - No strategy with `RTP - 3 * SE > 1 - ENTRY_FEE`
 - Strategies with SE above 0.5% (hold to cap) are run with more bets until SE
-  is below 0.5%
+  is below 0.5%. This applies to each strategy's row over all profiles. The
+  per-profile cells are reported with whatever SE the run gives them (a
+  third of the bets each) and judged by the same 3 SE rule.
+- Payouts are heavily right-skewed (many small losses, rare large wins), so
+  the mean of a long-hold strategy is not normally distributed even at
+  millions of bets and a cell can land beyond 3 SE more often than a normal
+  table says. A cell above target is still a failure of the run. It is
+  resolved by an independent run with a new seed, never by widening the
+  tolerance; a real edge shows up again, noise does not.
 
 Also report for sizing house risk: distribution of round length, share of
 coins that graduate, share that hit settlement, largest house loss over any
@@ -228,8 +243,16 @@ so that every machine computes the same round bit for bit.
   Price scale: `PRICE_SCALE = 10^9` (1.00x is `1_000_000_000`).
   Money is held in minor units (1/100 of a play coin).
 - `Math.exp`, `Math.log`, `Math.random`, `Date` and any float arithmetic are
-  forbidden inside `packages/engine`. A lint rule and a test enforce this.
-  Floats are allowed only in rendering code.
+  forbidden inside `packages/engine/src`. A test enforces this by walking
+  the TypeScript syntax tree with type information
+  (`packages/engine/test/purity.test.ts`): non-integer literals, `/` and `**`
+  on anything but `bigint`, float helpers, clocks, platform randomness, I/O
+  globals and imports from outside the engine all fail it. Small integers
+  (ticks, indexes, 32-bit draws) may be JavaScript numbers; they are only
+  added, multiplied, compared and bit-shifted, which is exact. Floats are
+  allowed only in rendering code and in the offline table generator.
+  *(The first draft also asked for a lint rule; the type-aware test replaces
+  it.)*
 
 ### 10.2 Rug check
 
@@ -269,8 +292,14 @@ so that every machine computes the same round bit for bit.
   round down, units bought round down, payouts round down to a minor unit,
   fees round up.
 - Minimum stake is high enough that rounding loss per bet is below 0.01% of
-  stake, so nobody is materially shorted and splitting a stake into many
-  small bets cannot gain anything.
+  stake for one buy and one full sale (at most two minor units), so nobody
+  is materially shorted and splitting a stake into many small bets cannot
+  gain anything. Every further partial sale can cost up to one more minor
+  unit.
+- Price rounding is one price unit (`1e-9` of the launch price) per tick at
+  most. Relative to the current price that is tiny near 1.00x and grows as
+  the price falls: about `5e-8` per tick at 0.01x. It always goes against
+  the player.
 
 ### 10.5 Exact tests (in addition to §7)
 

@@ -34,6 +34,10 @@ main { flex: 1; padding: 0 12px 12px; display: flex; flex-direction: column; gap
 .speed, .stakes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .speed .label, .stakes .label { margin-right: 2px; }
 
+.commit { font-size: 11px; }
+.commit code { font-family: ui-monospace, Consolas, monospace; }
+.top .term-pop { bottom: auto; top: calc(100% + 6px); }
+
 .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; }
 .chip-on { background: var(--accent); border-color: var(--accent); color: #fff; }
 

@@ -120,15 +120,26 @@ For every strategy, the expected total payout is at most 97% of the total
 staked. The shortfall below 97% has three sources, all against the player:
 table drift (at most `1e-9` per tick, about `1e-12` for the committed
 tables), integer rounding (at most one price unit per tick and two minor
-units per bet), and the payout cap. Over a maximum-length round the first
-two together stay below `1e-5` (`exact.test.ts`, "cumulative drift").
+units for a buy and one full sale, one more for each further partial sale),
+and the payout cap. Over a maximum-length round the first two together stay
+below `1e-5` of the launch price (`exact.test.ts`, "cumulative drift").
+Measured against a position opened at a much lower price the rounding loss
+is relatively larger (the price is rounded to `1e-9` of the launch price,
+not of the current price), and it is still a loss for the player.
 
 ## What this does not show
 
 - It is an argument about expectation. The house can still lose a lot over a
   short run; see the house-risk section of `docs/reports/m1-rtp.md`.
-- It relies on HMAC-SHA256 behaving as a pseudorandom function and on the
-  seed staying secret until the round ends. Seed handling, order timing and
-  replay are operational questions for M3.
+- It relies on HMAC-SHA256 behaving as a pseudorandom function, on the seed
+  staying secret until the round ends, and on the seed and round id both
+  being fixed by the published commit before any bet. Seed handling, order
+  timing and replay are operational questions for M3. In the single-player
+  build of M2 the round runs inside the player's own browser, so the seed is
+  in that browser's memory during the round; that build is for trying the
+  game, not for proving anything to the player.
+- The engine validates its config and refuses values it cannot run (a
+  fractional round length would never settle, which would break the bounded
+  stopping time used in step 3).
 - It is not a certification. Real-money use needs review by an accredited
   test lab.

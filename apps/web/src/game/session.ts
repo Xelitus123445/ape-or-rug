@@ -133,8 +133,13 @@ export class GameSession {
   firstRugSeen = false;
 
   private readonly newSeed: () => Uint8Array;
-  private seed: Uint8Array | null = null;
-  private streams: CoinStream[] = [];
+  // Real private fields: the seed and the keyed streams do not show up in
+  // Object.keys, JSON dumps or error reports. In this single-player build the
+  // round still runs inside the browser, so this keeps the seed out of
+  // accidents, not out of reach of someone with a debugger; M3 moves it to
+  // the server.
+  #seed: Uint8Array | null = null;
+  #streams: CoinStream[] = [];
   private roundStartBalance = START_BALANCE;
   private staked = 0n;
   private feedId = 0;
@@ -178,30 +183,32 @@ export class GameSession {
   setPace(id: string): void {
     const next = PACES.find((p) => p.id === id);
     if (next === undefined || next === this.pace) return;
-    // Keep the remaining wait the same number of seconds.
-    const seconds = this.waitSeconds;
+    // Rescale the remaining wait exactly (rounded up to a tick), so switching
+    // back and forth can never add waiting time.
+    const from = this.pace.ticksPerSecond;
+    const to = next.ticksPerSecond;
     this.pace = next;
-    if (this.phase !== "live") this.wait = seconds * next.ticksPerSecond;
+    if (this.phase !== "live") this.wait = (this.wait * to + from - 1 - ((this.wait * to + from - 1) % from)) / from;
     this.changed();
   }
 
   /** Commits to a fresh seed and launches three coins at 1.00x. Buying is open during the countdown. */
-  prepareRound(): void {
+  private prepareRound(): void {
     const seed = this.newSeed();
-    this.seed = seed;
+    this.#seed = seed;
     this.roundNo++;
     this.roundId = `solo-${this.roundNo}`;
-    this.commit = commitOf(seed);
+    this.commit = commitOf(seed, this.roundId);
     this.revealedSeed = null;
     const key = new RoundKey(seed, this.roundId);
     const taken = new Set<number>();
     const profiles = roundProfiles(key, this.engine.config.coinsPerRound);
-    this.streams = [];
+    this.#streams = [];
     this.coins = [];
     for (let i = 0; i < this.engine.config.coinsPerRound; i++) {
       const stream = new CoinStream(key, i);
       const state = launchCoin(profiles[i]!);
-      this.streams.push(stream);
+      this.#streams.push(stream);
       this.coins.push({ index: i, meta: cosmetics(stream, taken), state, history: [1], records: [snapshot(state)], marks: [], lastAlivePrice: state.price });
     }
     this.ledger = new Ledger(DEFAULT_CONFIG, this.ledger.balance);
@@ -253,7 +260,10 @@ export class GameSession {
       const c = coin.state;
       if (c.status !== STATUS_ALIVE) continue;
       const before = c.price;
-      stepCoin(this.engine, this.streams[coin.index]!, c);
+      // What the player's open bag in this coin is worth right before the tick.
+      let bagBefore = 0n;
+      for (const p of this.ledger.positions) if (p.open && p.coin === coin.index) bagBefore += valueOf(p.units, before);
+      stepCoin(this.engine, this.#streams[coin.index]!, c);
       this.ticksPlayed++;
       coin.records.push(snapshot(c));
       coin.history.push(Number(c.price) / Number(PRICE_SCALE));
@@ -266,10 +276,12 @@ export class GameSession {
         this.firstRugSeen = true;
       } else coin.lastAlivePrice = c.price;
 
+      let rugLossShown = false;
       for (const o of this.ledger.onTick(coin.index, c.status, c.price)) {
         if (o.reason === "rug") {
-          const pos = this.ledger.get(o.positionId)!;
-          this.push("lost", coin.index, { amount: pos.stake - pos.paid, price: before });
+          // One line per coin: the value that just went to zero, never negative.
+          if (!rugLossShown) this.push("lost", coin.index, { amount: bagBefore, price: before });
+          rugLossShown = true;
           if (this.worst === null || before > this.worst.price) this.worst = { coin: coin.index, price: before };
         } else {
           this.push(o.reason === "cap" ? "cap" : "settled", coin.index, { amount: o.payout });
@@ -289,7 +301,7 @@ export class GameSession {
   private endRound(): void {
     this.phase = "ended";
     this.roundsPlayed++;
-    this.revealedSeed = toHex(this.seed!);
+    this.revealedSeed = toHex(this.#seed!);
     this.summary = {
       net: this.ledger.balance - this.roundStartBalance,
       staked: this.staked,
@@ -300,7 +312,12 @@ export class GameSession {
     this.wait = NEXT_ROUND_SECONDS * this.pace.ticksPerSecond;
   }
 
+  private hasCoin(coin: number): boolean {
+    return Number.isInteger(coin) && coin >= 0 && coin < this.coins.length;
+  }
+
   holding(coin: number): CoinHolding {
+    if (!this.hasCoin(coin)) return { positions: [], stake: 0n, paid: 0n, value: 0n, canInitials: false };
     const c = this.coins[coin]!.state;
     const positions = this.ledger.positions.filter((p) => p.coin === coin);
     let stake = 0n, paid = 0n, value = 0n, canInitials = false;
@@ -317,6 +334,7 @@ export class GameSession {
 
   buy(coin: number, stake: bigint): ActionResult {
     if (this.phase === "ended") return { ok: false, error: "round_not_open" };
+    if (!this.hasCoin(coin)) return { ok: false, error: "bad_coin" };
     const c = this.coins[coin]!;
     const r = this.ledger.buy(coin, stake, c.state.status, c.state.price, c.state.tick);
     if (!r.ok) return r;
@@ -329,6 +347,7 @@ export class GameSession {
 
   /** Sell `bps` / 10000 of every open position in the coin. */
   sell(coin: number, bps: bigint): ActionResult {
+    if (!this.hasCoin(coin)) return { ok: false, error: "bad_coin" };
     const c = this.coins[coin]!;
     let total = 0n;
     let sold = false;
@@ -354,6 +373,7 @@ export class GameSession {
   }
 
   takeInitials(coin: number): ActionResult {
+    if (!this.hasCoin(coin)) return { ok: false, error: "bad_coin" };
     const c = this.coins[coin]!;
     let total = 0n;
     let done = false;
@@ -388,10 +408,11 @@ export class GameSession {
 
   /** After the round: check the seed against the commit and recompute the whole round from it. */
   verify(): Verification | null {
-    if (this.phase !== "ended" || this.seed === null) return null;
+    const seed = this.#seed;
+    if (this.phase !== "ended" || seed === null) return null;
     const playedHash = roundHash(this.playedRound());
-    const recomputedHash = roundHash(generateRound(this.engine, this.seed, this.roundId));
-    return { commitOk: verifyCommit(this.seed, this.commit), roundOk: playedHash === recomputedHash, playedHash, recomputedHash };
+    const recomputedHash = roundHash(generateRound(this.engine, seed, this.roundId));
+    return { commitOk: verifyCommit(seed, this.roundId, this.commit), roundOk: playedHash === recomputedHash, playedHash, recomputedHash };
   }
 }
 
