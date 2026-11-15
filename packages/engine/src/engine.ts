@@ -347,6 +347,22 @@ export function generateRound(engine: Engine, serverSeed: Uint8Array, roundId: s
   return { roundId, coins };
 }
 
+/**
+ * A single coin played on its own, for the lane mode where every coin has its
+ * own seed and commit. The profile is fixed by the lane, not drawn; the caller
+ * puts it into the round id so that the commit covers it. Stream index is 0.
+ */
+export function generateCoinRound(engine: Engine, serverSeed: Uint8Array, roundId: string, profile: number): Round {
+  const stream = new CoinStream(new RoundKey(serverSeed, roundId), 0);
+  const c = launchCoin(profile);
+  const ticks: TickRecord[] = [snapshot(c)];
+  while (c.status === STATUS_ALIVE) {
+    stepCoin(engine, stream, c);
+    ticks.push(snapshot(c));
+  }
+  return { roundId, coins: [{ coinIndex: 0, profile: c.profile, ticks }] };
+}
+
 /** Canonical text of a round: one line per coin tick. */
 export function roundCanonicalText(round: Round): string {
   const lines: string[] = [];

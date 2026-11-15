@@ -94,6 +94,19 @@ export class Ledger {
     return this.positions.find((p) => p.id === id);
   }
 
+  /**
+   * Forget the closed positions of a coin slot, before a new coin starts in
+   * it. Refuses while anything in the slot is still open, so a position can
+   * never carry over from one coin to the next.
+   */
+  clearClosed(coin: number): boolean {
+    if (this.positions.some((p) => p.coin === coin && p.open)) return false;
+    for (let i = this.positions.length - 1; i >= 0; i--) {
+      if (this.positions[i]!.coin === coin) this.positions.splice(i, 1);
+    }
+    return true;
+  }
+
   /** Buy at the current tick's price. Rejected unless the coin is alive. */
   buy(coin: number, stake: bigint, coinStatus: number, price: bigint, tick: number): Result<Position> {
     if (typeof coin !== "number" || !Number.isInteger(coin) || coin < 0 || coin >= this.config.coinsPerRound) return fail("bad_coin");

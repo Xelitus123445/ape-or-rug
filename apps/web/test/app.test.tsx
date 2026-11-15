@@ -41,7 +41,8 @@ describe("app smoke test", () => {
     expect(host.querySelectorAll(".card").length).toBe(3);
     expect(host.textContent).toContain(S.tutorial[0]!.title);
 
-    await act(async () => button(host, "Ape into")!.click());
+    expect(host.textContent).toContain(S.sameOdds);
+    await act(async () => button(host, S.buyCta)!.click());
     expect(host.textContent).toContain("99,000.00 USDK");
     expect(host.textContent).toContain(S.tutorial[1]!.title);
 
@@ -55,20 +56,29 @@ describe("app smoke test", () => {
     expect(host.textContent).toContain(S.glossaryTitle);
     await act(async () => button(host, S.close)!.click());
 
-    // Run long enough for several whole rounds, summary and auto-restart included.
-    let sawSummary = false;
-    for (let i = 0; i < 400; i++) {
+    // Switch speed and break while it runs.
+    await act(async () => button(host, S.paceNames.turbo!)!.click());
+    await act(async () => button(host, "5s")!.click());
+
+    // Run long enough for many coins to end and relaunch on every lane.
+    let verified = 0;
+    for (let i = 0; i < 300; i++) {
       await act(async () => vi.advanceTimersByTime(5000));
-      if (host.textContent!.includes(S.summaryTitle) && !sawSummary) {
-        sawSummary = true;
-        await act(async () => button(host, S.verifyOpen)!.click());
+      // Keep buying whenever the focused coin can be bought.
+      const buy = button(host, S.buyCta) ?? button(host, S.buyMore);
+      if (i % 7 === 0 && buy !== undefined && !buy.disabled) await act(async () => buy.click());
+      const verify = button(host, S.verifyShort);
+      if (verify !== undefined && verified < 3) {
+        verified++;
+        await act(async () => verify.click());
         expect(host.textContent).toContain(S.verifyCommitOk);
         expect(host.textContent).toContain(S.verifyRoundOk);
         await act(async () => button(host, S.close)!.click());
       }
     }
-    expect(sawSummary).toBe(true);
-    expect(host.textContent).toMatch(/Round \d+/);
+    expect(verified).toBe(3);
+    expect(host.querySelectorAll(".history li").length).toBeGreaterThan(5);
+    expect(host.querySelectorAll(".card").length).toBe(3);
     await act(async () => root.unmount());
   });
 });
