@@ -93,7 +93,11 @@ export function clientAddress(req: IncomingMessage): string {
   const direct = req.socket.remoteAddress ?? "?";
   if (!isPrivateAddress(direct)) return direct;
   const header = req.headers["x-forwarded-for"];
-  const hops = (Array.isArray(header) ? header.join(",") : (header ?? "")).split(",").map((s) => s.trim()).filter((s) => s !== "");
+  // A port after an IPv4 entry ("5.6.7.8:4431") is dropped, so it cannot make one player look like many.
+  const hops = (Array.isArray(header) ? header.join(",") : (header ?? ""))
+    .split(",")
+    .map((s) => s.trim().replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, "$1").replace(/^\[([0-9a-fA-F:.]+)\](?::\d+)?$/, "$1"))
+    .filter((s) => s !== "");
   for (let i = hops.length - 1; i >= 0; i--) if (!isPrivateAddress(hops[i]!)) return hops[i]!;
   return direct;
 }

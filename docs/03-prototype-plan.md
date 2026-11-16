@@ -136,6 +136,14 @@ building, not in the original text:
   duplicated or out-of-date orders are refused, and the order has no price
   field at all.
 
+Bug-hunter: PASS after three rounds (commit 665543e and follow-up).
+
+Carried into M4 deploy: the per-address room limit reads the player's
+address from X-Forwarded-For only when the socket comes from a private
+address. After the first deploy, log one resolved address to confirm the
+host's proxy is private and appends to the header; if not, add a
+`TRUST_PROXY` setting.
+
 Acceptance tests: `packages/game/test/room.test.ts` (5 clients in sync for
 20 coins on every lane; late, replayed and forged orders; every outbound
 frame inspected for future ticks and unrevealed seeds; every trade in the

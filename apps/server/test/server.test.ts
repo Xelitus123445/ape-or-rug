@@ -116,6 +116,8 @@ describe("server", () => {
     expect(clientAddress(req("10.0.0.5", "1.2.3.4, 198.51.100.7"))).toBe("198.51.100.7");
     expect(clientAddress(req("::ffff:127.0.0.1", "198.51.100.7, 10.1.1.1"))).toBe("198.51.100.7");
     expect(clientAddress(req("127.0.0.1"))).toBe("127.0.0.1");
+    expect(clientAddress(req("10.0.0.5", "5.6.7.8:4431"))).toBe("5.6.7.8");
+    expect(clientAddress(req("10.0.0.5", "[2001:db8::1]:443"))).toBe("2001:db8::1");
   });
 
   it("closes connections that do not say hello properly or flood the server", async () => {
