@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { MAX_PLAYERS, RoomMirror, STAKES, START_BALANCE, encode } from "@ape/game";
-import { startServer } from "../src/server.ts";
+import type { IncomingMessage } from "node:http";
+import { clientAddress, startServer } from "../src/server.ts";
 import type { RunningServer } from "../src/server.ts";
 
 let server: RunningServer | null = null;
@@ -107,6 +108,14 @@ describe("server", () => {
     const joiner = await connect(server.port, a.mirror.code, "Dee");
     expect(joiner.mirror.fatal).toBeNull();
     expect(server.rooms.size).toBe(2);
+  });
+
+  it("believes X-Forwarded-For only from a private proxy, and only its right-most public entry", () => {
+    const req = (remote: string, xff?: string) => ({ socket: { remoteAddress: remote }, headers: xff === undefined ? {} : { "x-forwarded-for": xff } }) as unknown as IncomingMessage;
+    expect(clientAddress(req("203.0.113.9", "1.2.3.4"))).toBe("203.0.113.9");
+    expect(clientAddress(req("10.0.0.5", "1.2.3.4, 198.51.100.7"))).toBe("198.51.100.7");
+    expect(clientAddress(req("::ffff:127.0.0.1", "198.51.100.7, 10.1.1.1"))).toBe("198.51.100.7");
+    expect(clientAddress(req("127.0.0.1"))).toBe("127.0.0.1");
   });
 
   it("closes connections that do not say hello properly or flood the server", async () => {

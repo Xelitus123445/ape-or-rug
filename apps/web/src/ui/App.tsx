@@ -197,7 +197,9 @@ function VerifyView({ m, coin, onClose }: { m: RoomMirror; coin: FinishedCoin; o
       <div className="mono-label">{S.verifySeed}</div>
       <div className="mono">{coin.seed}</div>
       <p className={v.commitOk ? "check ok" : "check bad"}>{v.commitOk ? `✓ ${S.verifyCommitOk}` : `✗ ${S.verifyCommitBad}`}</p>
-      <p className={v.roundOk ? "check ok" : "check bad"}>{v.roundOk ? `✓ ${S.verifyRoundOk}` : `✗ ${S.verifyRoundBad}`}</p>
+      <p className={v.roundOk ? "check ok" : "check bad"}>
+        {v.full ? (v.roundOk ? `✓ ${S.verifyRoundOk}` : `✗ ${S.verifyRoundBad}`) : v.roundOk ? `✓ ${S.verifySummaryOk}` : `✗ ${S.verifySummaryBad}`}
+      </p>
       <div className="mono-label">{S.verifyHash}</div>
       <div className="mono">{v.recomputedHash}</div>
     </Modal>
@@ -445,8 +447,11 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
   const ended = lane.ended;
   const endedNet = ended !== null ? ended.paid - ended.staked : 0n;
 
-  for (const f of m.history) if (f.staked > 0n && !mine.current.has(f.roundId)) mine.current.set(f.roundId, f);
-  const myCoins = [...mine.current.values()].sort((a, b) => b.id - a.id).slice(0, 30);
+  // Keyed by commit: round ids start again at 1 if the server restarts. Newest first.
+  for (const f of [...m.history].reverse()) {
+    if (f.staked > 0n && !mine.current.has(f.commit)) mine.current.set(f.commit, f);
+  }
+  const myCoins = [...mine.current.values()].reverse().slice(0, 30);
   const otherCoins = m.history.filter((f) => f.staked === 0n).slice(0, 4);
   const holding = hasOpen && alive;
 
@@ -633,7 +638,7 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
               {myCoins.length > 0 && (
                 <ul className="history">
                   {myCoins.map((f) => (
-                    <li key={f.roundId} className={`p${f.profile}`}>
+                    <li key={f.commit} className={`p${f.profile}`}>
                       <Avatar coin={f} size={24} />
                       <span className="history-main">
                         <b>${f.meta.ticker}</b> <span className="history-class">{S.profiles[f.profile]}</span>
@@ -650,7 +655,7 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
                   <div className="history-sub">{S.historyOthers}</div>
                   <ul className="history history-others">
                     {otherCoins.map((f) => (
-                      <li key={f.roundId} className={`p${f.profile}`}>
+                      <li key={f.commit} className={`p${f.profile}`}>
                         <span className="history-main">
                           <b>${f.meta.ticker}</b> <span className="muted">· {endLine(f)} · {S.peak(mult(f.peak))}</span>
                         </span>

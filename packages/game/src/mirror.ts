@@ -235,13 +235,14 @@ export class RoomMirror {
         this.code = m.code;
         this.settings = m.settings;
         // Coins already in the list (after a reconnect) keep the ticks this client saw live.
-        const known = new Map(this.history.map((f) => [f.roundId, f]));
+        // Matched by commit: round ids start again at 1 when the server restarts.
+        const known = new Map(this.history.map((f) => [f.commit, f]));
         const fresh = m.history.map((f) => {
-          const k = known.get(f.roundId);
-          return k !== undefined && k.records.length > 0 ? { ...f, records: k.records } : f;
+          const k = known.get(f.commit);
+          return k !== undefined && k.records.length > 0 && k.roundId === f.roundId ? { ...f, records: k.records } : f;
         });
-        const ids = new Set(fresh.map((f) => f.roundId));
-        this.history = [...fresh, ...this.history.filter((f) => !ids.has(f.roundId))].sort((a, b) => b.id - a.id).slice(0, HISTORY_KEEP);
+        const commits = new Set(fresh.map((f) => f.commit));
+        this.history = [...fresh, ...this.history.filter((f) => !commits.has(f.commit))].slice(0, HISTORY_KEEP);
         this.lanes = m.lanes.map((v) => this.fromView(v));
         this.#waits = m.lanes.map((v) => v.waitUnits);
         this.feed = m.feed.slice();
@@ -279,7 +280,7 @@ export class RoomMirror {
       case "end": {
         const l = this.lanes[m.lane];
         let coin = m.coin;
-        if (l !== undefined && l.roundId === m.coin.roundId) {
+        if (l !== undefined && l.commit === m.coin.commit) {
           // The ticks this client was sent live are the ones the fairness check replays against.
           coin = { ...m.coin, records: l.coin.records.slice() };
           l.phase = "cooldown";
@@ -320,9 +321,9 @@ export class RoomMirror {
   private fromView(v: LaneView): MirrorLane {
     const coin = liveCoin(v);
     // A lane in cooldown shows its ended coin; its records are the lane's own.
-    const ended = v.ended !== null && v.ended.roundId === v.roundId ? { ...v.ended, records: coin.records.slice() } : v.ended;
+    const ended = v.ended !== null && v.ended.commit === v.commit ? { ...v.ended, records: coin.records.slice() } : v.ended;
     if (ended !== null) {
-      const i = this.history.findIndex((f) => f.roundId === ended.roundId);
+      const i = this.history.findIndex((f) => f.commit === ended.commit);
       if (i >= 0) this.history[i] = ended;
     }
     return { index: v.index, profile: v.profile, phase: v.phase, coinNo: v.coinNo, roundId: v.roundId, commit: v.commit, coin, ended };

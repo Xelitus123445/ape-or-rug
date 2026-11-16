@@ -142,6 +142,8 @@ export const S = {
   verifyCommitBad: "The seed does NOT match the fingerprint",
   verifyRoundOk: "Replaying the seed gives exactly the coin you saw",
   verifyRoundBad: "Replaying the seed gives a DIFFERENT coin",
+  verifySummaryOk: "Replaying the seed gives the same end, peak and length shown here. This coin ended before you joined, so its ticks were not sent to you to compare one by one",
+  verifySummaryBad: "Replaying the seed does NOT give the end, peak and length shown here",
   verifyHash: "Checksum of every price move",
   close: "Close",
   reset: "Reset",

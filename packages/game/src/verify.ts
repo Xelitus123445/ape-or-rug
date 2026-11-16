@@ -9,13 +9,15 @@ import type { FinishedCoin } from "./protocol.ts";
 export interface Verification {
   readonly commitOk: boolean;
   readonly roundOk: boolean;
+  /** False for a coin that ended before this player joined: only its summary facts were compared. */
+  readonly full: boolean;
   readonly playedHash: string;
   readonly recomputedHash: string;
 }
 
 /** Never throws: anything malformed is reported as a failed check. */
 export function verifyCoin(engine: Engine, coin: FinishedCoin): Verification {
-  const failed: Verification = { commitOk: false, roundOk: false, playedHash: "", recomputedHash: "" };
+  const failed: Verification = { commitOk: false, roundOk: false, full: true, playedHash: "", recomputedHash: "" };
   try {
     if (typeof coin.seed !== "string" || !/^[0-9a-f]{64}$/.test(coin.seed)) return failed;
     // The profile for the replay is read from the round id, which the commit
@@ -34,9 +36,9 @@ export function verifyCoin(engine: Engine, coin: FinishedCoin): Verification {
     const factsOk = coin.profile === profile && coin.status === last.status && coin.ticks === last.tick && coin.peak === peak && coin.endPrice === endPrice;
     // A coin that ended before this player joined comes without ticks: only
     // the facts shown about it (profile, end, peak, length) can be checked.
-    if (coin.records.length === 0) return { commitOk, roundOk: factsOk, playedHash: "", recomputedHash };
+    if (coin.records.length === 0) return { commitOk, roundOk: factsOk, full: false, playedHash: "", recomputedHash };
     const playedHash = roundHash({ roundId: coin.roundId, coins: [{ coinIndex: 0, profile: coin.profile, ticks: coin.records }] });
-    return { commitOk, roundOk: playedHash === recomputedHash && factsOk && sameRecords(coin.records, ticks), playedHash, recomputedHash };
+    return { commitOk, roundOk: playedHash === recomputedHash && factsOk && sameRecords(coin.records, ticks), full: true, playedHash, recomputedHash };
   } catch {
     return failed;
   }

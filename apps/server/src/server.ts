@@ -72,6 +72,32 @@ function frame(msg: ServerMsg): string {
   return encode([msg]);
 }
 
+/** Loopback and private-network addresses: where a hosting proxy sits, never a player on the internet. */
+export function isPrivateAddress(raw: string): boolean {
+  const a = raw.trim().toLowerCase().replace(/^::ffff:/, "");
+  if (a === "::1" || a.startsWith("fc") || a.startsWith("fd") || a.startsWith("fe80:")) return true;
+  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(a);
+  if (m === null) return false;
+  const [x, y] = [Number(m[1]), Number(m[2])];
+  return x === 127 || x === 10 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127) || (x === 169 && y === 254);
+}
+
+/**
+ * The player's own address. Behind a hosting proxy every socket comes from
+ * the proxy, and the player is in X-Forwarded-For. The header is only
+ * believed when the socket itself comes from a private address (a proxy),
+ * and then the right-most entry that is not another private hop is taken:
+ * entries further left were written by the client and can be anything.
+ */
+export function clientAddress(req: IncomingMessage): string {
+  const direct = req.socket.remoteAddress ?? "?";
+  if (!isPrivateAddress(direct)) return direct;
+  const header = req.headers["x-forwarded-for"];
+  const hops = (Array.isArray(header) ? header.join(",") : (header ?? "")).split(",").map((s) => s.trim()).filter((s) => s !== "");
+  for (let i = hops.length - 1; i >= 0; i--) if (!isPrivateAddress(hops[i]!)) return hops[i]!;
+  return direct;
+}
+
 export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const log = opts.log ?? ((line: string) => console.log(line));
   const tickMs = opts.tickMs ?? ((tps: number) => 1000 / tps);
@@ -91,6 +117,8 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
    * flipping the pace cannot hold the clock back.
    */
   function arm(h: Hosted): void {
+    // Ticks are due on a fixed schedule, so the time a tick takes does not slow the pace down.
+    let due = Date.now() + tickMs(h.room.ticksPerSecond);
     const tick = (): void => {
       if (hosted.get(h.room.code) !== h) return;
       try {
@@ -98,9 +126,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       } catch (e) {
         report(`room ${h.room.code}`, e);
       }
-      h.timer = setTimeout(tick, tickMs(h.room.ticksPerSecond));
+      const now = Date.now();
+      due += tickMs(h.room.ticksPerSecond);
+      // After a long stall (a paused laptop), carry on from now instead of catching up in a burst.
+      if (due < now - 1000) due = now;
+      h.timer = setTimeout(tick, Math.max(0, due - now));
     };
-    h.timer = setTimeout(tick, tickMs(h.room.ticksPerSecond));
+    h.timer = setTimeout(tick, Math.max(0, due - Date.now()));
   }
 
   function openRoom(code: string): Hosted {
@@ -202,7 +234,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: MAX_CLIENT_MESSAGE * 4 });
 
   wss.on("connection", (ws, req) => {
-    const address = req.socket.remoteAddress ?? "?";
+    const address = clientAddress(req);
     let seat: { h: Hosted; pid: string } | null = null;
     let tokens = BURST;
     let last = Date.now();

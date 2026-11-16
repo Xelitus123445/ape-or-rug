@@ -215,15 +215,21 @@ export function cleanNick(raw: unknown): string | null {
   return used + (other ? 1 : 0) > 1 ? null : nick;
 }
 
-// Cyrillic and Greek letters that look like Latin ones.
-const LOOKALIKE: Record<string, string> = {
+// Cyrillic and Greek letters that look like Latin ones. Capitals are mapped
+// before lowercasing: Greek "Ν" looks like "N" but its lowercase "ν" like "v".
+const LOOKALIKE_UPPER: Record<string, string> = {
+  А: "A", В: "B", Е: "E", К: "K", М: "M", Н: "H", О: "O", Р: "P", С: "C", Т: "T", У: "Y", Х: "X", І: "I", Ј: "J", Ѕ: "S",
+  Α: "A", Β: "B", Ε: "E", Ζ: "Z", Η: "H", Ι: "I", Κ: "K", Μ: "M", Ν: "N", Ο: "O", Ρ: "P", Τ: "T", Υ: "Y", Χ: "X",
+};
+const LOOKALIKE_LOWER: Record<string, string> = {
   а: "a", в: "b", е: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t", у: "y", х: "x", і: "i", ј: "j", ѕ: "s",
   α: "a", β: "b", ε: "e", ι: "i", κ: "k", ν: "v", ο: "o", ρ: "p", τ: "t", υ: "u", χ: "x", ζ: "z", η: "n",
 };
 
 /** What a nickname looks like, for telling apart two names that render the same. */
 export function nickSkeleton(nick: string): string {
-  return [...nick.normalize("NFKC").toLowerCase()].map((ch) => LOOKALIKE[ch] ?? ch).join("").replace(/0/g, "o").replace(/[1l]/g, "i");
+  const upper = [...nick.normalize("NFKC")].map((ch) => LOOKALIKE_UPPER[ch] ?? ch).join("");
+  return [...upper.toLowerCase()].map((ch) => LOOKALIKE_LOWER[ch] ?? ch).join("").replace(/0/g, "o").replace(/[1l]/g, "i");
 }
 
 function isSeq(v: unknown): v is number {
