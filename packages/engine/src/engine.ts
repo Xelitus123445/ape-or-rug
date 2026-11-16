@@ -47,8 +47,24 @@ function isCount(x: unknown, min: number, max: number): boolean {
   return typeof x === "number" && Number.isInteger(x) && x >= min && x <= max;
 }
 
+function isRational(r: unknown): boolean {
+  const x = r as { num?: unknown; den?: unknown } | null;
+  return typeof x === "object" && x !== null && typeof x.num === "bigint" && typeof x.den === "bigint" && x.den > 0n && x.num >= 0n;
+}
+
 /** Rejects configs the engine or the ledger cannot run correctly. */
 export function validateConfig(config: EngineConfig): void {
+  if (!Array.isArray(config.profiles) || config.profiles.length !== 3) throw new Error("profiles must list degen, mid and runner");
+  for (const p of config.profiles) {
+    if (!isRational(p.hazard) || typeof p.sigmaPpm !== "bigint" || p.sigmaPpm <= 0n) throw new Error("profile hazard and volatility must be integers");
+  }
+  if (!Array.isArray(config.events) || config.events.length !== 3) throw new Error("events must list DEV_SOLD, WHALE_IN and KOL_TWEET");
+  for (const e of config.events) {
+    if (!isRational(e.hMul) || !isRational(e.sMul)) throw new Error("event multipliers must be integer fractions");
+  }
+  if (!isRational(config.eventStart)) throw new Error("eventStart must be an integer fraction");
+  if (!isRational(config.graduation.hMul) || !isRational(config.graduation.sMul)) throw new Error("graduation multipliers must be integer fractions");
+  if (typeof config.graduation.price !== "bigint") throw new Error("graduation price must be an integer price");
   if (!isCount(config.maxTicks, 1, 9_999_999)) throw new Error("maxTicks must be a whole number of ticks, 1 or more");
   if (!isCount(config.coinsPerRound, 1, 9)) throw new Error("coinsPerRound must be a whole number from 1 to 9");
   if (!isCount(config.eventMinTicks, 1, 9_999_999)) throw new Error("eventMinTicks must be a whole number, 1 or more");
@@ -79,12 +95,24 @@ export interface Engine {
 
 let cachedTables: ParsedTable[] | null = null;
 
+/** Deep copy of plain objects and arrays, frozen at every level. Other values are kept as they are. */
+export function frozenCopy<T>(value: T): T {
+  if (Array.isArray(value)) return Object.freeze(value.map((v: unknown) => frozenCopy(v))) as T;
+  if (typeof value === "object" && value !== null) {
+    return Object.freeze(Object.fromEntries(Object.entries(value).map(([k, v]) => [k, frozenCopy(v)]))) as T;
+  }
+  return value;
+}
+
 /**
  * Builds an engine for a config. The committed tables must match the regimes
  * the config describes, otherwise this throws: a table is only fair for the
  * hazard it was built for.
  */
-export function createEngine(config: EngineConfig = DEFAULT_CONFIG): Engine {
+export function createEngine(given: EngineConfig = DEFAULT_CONFIG): Engine {
+  // The engine keeps its own frozen copy: changing the caller's object later
+  // cannot reach a config that has already been validated.
+  const config = frozenCopy(given);
   validateConfig(config);
   if (cachedTables === null) cachedTables = loadTables();
   const tables = cachedTables;

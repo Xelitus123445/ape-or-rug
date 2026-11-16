@@ -59,6 +59,10 @@ describe("game session (lanes)", () => {
     // Lane profiles never change and three different coins are always on screen.
     for (const l of s.lanes) expect(l.coin.state.profile).toBe(l.index);
     expect(new Set(s.coins.map((c) => c.meta.ticker)).size).toBe(3);
+    // The ended-coins list never shows two different coins under one name.
+    // (A lane in cooldown still shows its ended coin, which is already in the history.)
+    const names = [...s.history.map((f) => f.meta.ticker), ...s.lanes.filter((l) => l.phase !== "cooldown").map((l) => l.coin.meta.ticker)];
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("reveals for every ended coin a seed that matches its commit and replays to the same coin", () => {
@@ -229,10 +233,13 @@ describe("game session (lanes)", () => {
     expect(s.lanes[0]!.phase).toBe("prelaunch");
     expect(s.lanes[0]!.wait).toBe(17 * 8);
     s.buy(1, STAKES[0]!);
+    const idsBefore = new Set(s.lanes.map((l) => l.roundId));
     s.reset();
     expect(s.balance).toBe(START_BALANCE);
     expect(s.feed.length).toBe(0);
     expect(s.history.length).toBe(0);
-    expect(s.lanes.every((l) => l.phase === "prelaunch" && l.coinNo === 1)).toBe(true);
+    expect(s.lanes.every((l) => l.phase === "prelaunch" && l.ended === null)).toBe(true);
+    // Coin numbers keep counting, so a round id never names two different commits.
+    expect(s.lanes.some((l) => idsBefore.has(l.roundId))).toBe(false);
   });
 });

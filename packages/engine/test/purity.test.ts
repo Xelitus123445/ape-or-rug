@@ -2,7 +2,7 @@
 // no I/O anywhere under packages/engine/src. This walks the TypeScript syntax
 // tree with type information instead of matching text, so comments, strings
 // and spelling tricks do not matter.
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -13,8 +13,13 @@ const FORBIDDEN_GLOBALS = new Set([
   "queueMicrotask", "requestAnimationFrame", "parseFloat", "parseInt", "eval", "Function", "globalThis", "window", "self",
   "global", "navigator", "document", "WebSocket", "XMLHttpRequest", "Atomics", "SharedArrayBuffer", "Float32Array",
   "Float64Array", "Float16Array", "Intl", "console", "localStorage", "sessionStorage", "Worker", "Buffer", "Infinity", "NaN",
+  "JSON", "Reflect", "Proxy", "WeakRef", "FinalizationRegistry",
 ]);
-const FORBIDDEN_MEMBERS = new Set(["toFixed", "toPrecision", "toExponential", "toLocaleString", "random", "now"]);
+const FORBIDDEN_MEMBERS = new Set([
+  "toFixed", "toPrecision", "toExponential", "toLocaleString", "random", "now",
+  "localeCompare", "toLocaleUpperCase", "toLocaleLowerCase", "toLocaleDateString", "toLocaleTimeString",
+  "constructor", "prototype", "__proto__",
+]);
 const ALLOWED_NUMBER_STATICS = new Set(["isInteger", "isSafeInteger"]);
 const INTEGER_LITERAL = /^(?:\d[\d_]*|0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+)$/;
 
@@ -37,6 +42,11 @@ function check(program: ts.Program, files: readonly string[]): string[] {
     const parts = type.isUnion() ? type.types : [type];
     return parts.every((t) => (t.flags & ts.TypeFlags.BigIntLike) !== 0);
   };
+  const isNumeric = (node: ts.Expression): boolean => {
+    const type = checker.getTypeAtLocation(node);
+    const parts = type.isUnion() ? type.types : [type];
+    return parts.every((t) => (t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike)) !== 0);
+  };
   for (const file of files) {
     const source = program.getSourceFile(file);
     if (source === undefined) throw new Error(`purity: cannot read ${file}`);
@@ -47,9 +57,27 @@ function check(program: ts.Program, files: readonly string[]): string[] {
     const visit = (node: ts.Node): void => {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined) {
         const spec = (node.moduleSpecifier as ts.StringLiteral).text;
-        if (!spec.startsWith("./")) report(node, `import of "${spec}" (only files of the engine itself)`);
+        if (!spec.startsWith("./") || spec.includes("..")) report(node, `import of "${spec}" (only files of the engine itself)`);
       }
+      if (ts.isImportEqualsDeclaration(node)) report(node, "import = require");
       if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) report(node, "dynamic import");
+      // The checks below trust declared types, so the engine may not override them.
+      if (node.kind === ts.SyntaxKind.AnyKeyword) report(node, "type any");
+      if ((ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && (checker.getTypeFromTypeNode(node.type).flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.Any)) !== 0) {
+        report(node, `type assertion to ${node.type.getText(source)}`);
+      }
+      // Turning text into a number (+"1.5", "0.5" * 3) is a float path with no literal.
+      if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) report(node, "unary +");
+      if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken && !isNumeric(node.operand)) report(node, "unary - on a non-number");
+      if (ts.isBinaryExpression(node)) {
+        const op = node.operatorToken.kind;
+        const arithmetic = op === ts.SyntaxKind.AsteriskToken || op === ts.SyntaxKind.MinusToken || op === ts.SyntaxKind.PercentToken || op === ts.SyntaxKind.AsteriskEqualsToken || op === ts.SyntaxKind.MinusEqualsToken || op === ts.SyntaxKind.PercentEqualsToken;
+        if (arithmetic && !(isNumeric(node.left) && isNumeric(node.right))) report(node, `"${node.operatorToken.getText(source)}" on a non-number`);
+      }
+      // A member reached through a computed string name cannot be checked by name.
+      if (ts.isElementAccessExpression(node) && !ts.isStringLiteralLike(node.argumentExpression) && !isNumeric(node.argumentExpression)) {
+        report(node, "member access through a computed name");
+      }
       if (ts.isNumericLiteral(node) && !INTEGER_LITERAL.test(node.getText(source))) report(node, `non-integer literal ${node.getText(source)}`);
       if (ts.isIdentifier(node) && FORBIDDEN_GLOBALS.has(node.text)) {
         const parent = node.parent;
@@ -98,7 +126,10 @@ function checkSnippet(code: string): string[] {
 describe("engine purity (10.1)", () => {
   it("finds nothing impure in packages/engine/src", () => {
     const dir = fileURLToPath(new URL("../src/", import.meta.url));
-    const files = (readdirSync(dir, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).map((f) => join(dir, f));
+    const all = (readdirSync(dir, { recursive: true }) as string[]).map((f) => join(dir, f)).filter((f) => statSync(f).isFile());
+    // Every file under src is TypeScript and gets checked; a .js or .mts helper would be skipped otherwise.
+    expect(all.filter((f) => !/\.ts$/.test(f) || /\.d\.ts$/.test(f))).toEqual([]);
+    const files = all;
     expect(files.length).toBeGreaterThanOrEqual(7);
     const program = ts.createProgram(files, OPTIONS);
     expect(check(program, files)).toEqual([]);

@@ -13,29 +13,51 @@ function randomSeed(): Uint8Array {
   return seed;
 }
 
-function remember(key: string): boolean {
+function readKey(key: string): string | null {
   try {
-    return localStorage.getItem(key) === "1";
+    return localStorage.getItem(key);
   } catch {
-    return false;
+    return null;
   }
 }
 
-function store(key: string, on = true): void {
+function writeKey(key: string, value: string): void {
   try {
-    localStorage.setItem(key, on ? "1" : "0");
+    localStorage.setItem(key, value);
   } catch {
     // Private mode: the choice simply does not stick.
   }
 }
 
-/** A slang word with its plain-language meaning on tap. */
+function remember(key: string): boolean {
+  return readKey(key) === "1";
+}
+
+function store(key: string, on = true): void {
+  writeKey(key, on ? "1" : "0");
+}
+
+/** A slang word with its plain-language meaning on tap. Closes on any tap elsewhere or on scroll. */
 function Term({ k, children }: { k: string; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: Event): void => {
+      if (ref.current !== null && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const close = (): void => setOpen(false);
+    document.addEventListener("pointerdown", outside);
+    window.addEventListener("scroll", close, { passive: true });
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      window.removeEventListener("scroll", close);
+    };
+  }, [open]);
   const [title, text] = S.terms[k]!;
   return (
-    <span className="term-wrap">
-      <button type="button" className="term" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen(!open); }} onBlur={() => setOpen(false)}>
+    <span className="term-wrap" ref={ref}>
+      <button type="button" className="term" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
         {children ?? title}
       </button>
       {open && (
@@ -121,9 +143,9 @@ function LaneCard({ session, lane, focused, onFocus }: { session: GameSession; l
         ) : lane.phase === "cooldown" ? (
           <span className="badge badge-quiet">{S.nextCoinIn(wait + Math.max(0, session.breakSeconds - 3))}</span>
         ) : c.event !== EVENT_NONE ? (
-          <span className={`badge badge-e${c.event}`}>{S.eventIcons[c.event]} {S.events[c.event]}</span>
+          <span className={`badge badge-e${c.event}`}>{S.eventIcons[c.event]} <Term k={EVENT_TERMS[c.event]!}>{S.events[c.event]}</Term></span>
         ) : c.graduated ? (
-          <span className="badge badge-grad">★ {S.graduated}</span>
+          <span className="badge badge-grad">★ <Term k="graduated">{S.graduated}</Term></span>
         ) : (
           <span className="badge badge-quiet">{S.profileRisk[lane.profile]}</span>
         )}
@@ -259,11 +281,24 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
   const [showGlossary, setShowGlossary] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [tipStep, setTipStep] = useState(() => (remember("aor.tips") ? -1 : 0));
-  const [rugTip, setRugTip] = useState(() => !remember("aor.rug"));
+  // The rug explainer shows over the stage the first time a coin the player holds rugs.
+  const [rugNote, setRugNote] = useState(false);
+  const rugExplained = useRef(remember("aor.rug"));
   const [muted, setMuted] = useState(() => remember("aor.muted"));
   const [pops, setPops] = useState<Pop[]>([]);
   const [shake, setShake] = useState(-1);
+  const [stakesOpen, setStakesOpen] = useState(false);
   const lastFeed = useRef(0);
+  // Coins the player bet on stay listed for the whole session, not just the last 12 ended coins.
+  const mine = useRef(new Map<number, FinishedCoin>());
+
+  // Pacing choices are remembered between visits.
+  useEffect(() => {
+    const pace = readKey("aor.pace");
+    if (pace !== null) session.setPace(pace);
+    const pause = Number(readKey("aor.break"));
+    if (BREAKS.includes(pause)) session.setBreak(pause);
+  }, [session]);
 
   const tps = session.pace.ticksPerSecond;
   useEffect(() => {
@@ -286,14 +321,25 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
     for (const f of fresh) {
       if (f.kind === "buy") play("buy", muted);
       else if (f.kind === "sell" || f.kind === "initials" || f.kind === "cap" || f.kind === "settled") {
-        play(f.won ? "win" : "loss", muted);
-        added.push({ id: f.id, text: `+${usdk(f.amount ?? 0n)}`, tone: f.won ? "gold" : "up" });
+        // What came back, and where the player now stands on this coin, coloured by that.
+        const h = session.holding(f.lane);
+        const net = h.paid + h.value - h.stake;
+        play(net >= 0n ? "win" : "loss", muted);
+        added.push({ id: f.id, text: S.popSold(usdk(f.amount ?? 0n), signedUsdk(net)), tone: net >= 0n ? "gold" : "down" });
       } else if (f.kind === "rug") {
         play("rug", muted);
         setShake(f.lane);
         setTimeout(() => setShake(-1), 700);
       } else if (f.kind === "lost") {
-        added.push({ id: f.id, text: `$${f.ticker} −${usdk(f.amount ?? 0n)}`, tone: "down" });
+        // The same number the card and the ended-coins list show: the result on this coin.
+        const h = session.holding(f.lane);
+        const net = h.paid - h.stake;
+        added.push({ id: f.id, text: S.popRug(f.ticker, signedUsdk(net)), tone: net >= 0n ? "up" : "down" });
+        if (!rugExplained.current) {
+          rugExplained.current = true;
+          setFocus(f.lane);
+          setRugNote(true);
+        }
       } else if (f.kind === "graduated") play("graduate", muted);
       else if (f.kind === "event" && f.lane === focus) play("event", muted);
       else if (f.kind === "launch" && f.lane === focus) play("go", muted);
@@ -328,6 +374,22 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
     act(r);
     if (r.ok && tipStep === 0) setTipStep(1);
   };
+  // Tips follow what the player does: after the first buy "Watch", once a bag is in profit "Cash out".
+  useEffect(() => {
+    if (tipStep === 1 && hasOpen && alive && result > 0n) setTipStep(2);
+  }, [tipStep, hasOpen, alive, result]);
+  const pickPace = (id: string): void => {
+    session.setPace(id);
+    writeKey("aor.pace", id);
+  };
+  const pickBreak = (seconds: number): void => {
+    session.setBreak(seconds);
+    writeKey("aor.break", String(seconds));
+  };
+  const closeRugNote = (): void => {
+    setRugNote(false);
+    store("aor.rug");
+  };
   const onSell = (r: { ok: true } | { ok: false; error: string }): void => {
     act(r);
     if (r.ok && tipStep >= 0) endTips();
@@ -344,6 +406,12 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
   const feedLines = session.feed.filter((f) => f.kind !== "launch").slice(0, 12);
   const ended = lane.ended;
   const endedNet = ended !== null ? ended.paid - ended.staked : 0n;
+
+  if (session.history.length === 0) mine.current.clear();
+  for (const f of session.history) if (f.staked > 0n && !mine.current.has(f.id)) mine.current.set(f.id, f);
+  const myCoins = [...mine.current.values()].sort((a, b) => b.id - a.id).slice(0, 30);
+  const otherCoins = session.history.filter((f) => f.staked === 0n).slice(0, 4);
+  const holding = hasOpen && alive;
 
   return (
     <div className="app">
@@ -366,11 +434,11 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
         </div>
         <div className="wallet">
           <div>
-            <div className="label">{S.balance}</div>
+            <div className="label"><Term k="usdk">{S.balance}</Term></div>
             <div className="balance">{usdk(session.balance)}</div>
           </div>
           <div className="wallet-right">
-            <div className="label">{S.session}<span className="wide-only"> · {S.coinsPlayed(session.coinsPlayed)}</span></div>
+            <div className="label"><Term k="session">{S.session}</Term><span className="wide-only">{S.sessionWide} · {S.coinsPlayed(session.coinsPlayed)}</span></div>
             <div className={`session-net ${sessionNet >= 0n ? "up" : "down"}`}>{signedUsdk(sessionNet)}</div>
           </div>
         </div>
@@ -378,7 +446,7 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
           <div className="setting" role="group" aria-label={S.speed} title={S.paceHint(tps)}>
             <span className="label">{S.speed}</span>
             {PACES.map((p) => (
-              <button key={p.id} type="button" className={`seg ${p === session.pace ? "seg-on" : ""}`} onClick={() => session.setPace(p.id)}>
+              <button key={p.id} type="button" className={`seg ${p === session.pace ? "seg-on" : ""}`} onClick={() => pickPace(p.id)}>
                 {S.paceNames[p.id]}
               </button>
             ))}
@@ -386,12 +454,13 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
           <div className="setting" role="group" aria-label={S.breakLabel} title={S.breakHint}>
             <span className="label">{S.breakLabel}</span>
             {BREAKS.map((b) => (
-              <button key={b} type="button" className={`seg ${b === session.breakSeconds ? "seg-on" : ""}`} onClick={() => session.setBreak(b)}>
+              <button key={b} type="button" className={`seg ${b === session.breakSeconds ? "seg-on" : ""}`} onClick={() => pickBreak(b)}>
                 {b}s
               </button>
             ))}
           </div>
-          <button type="button" className="seg" onClick={() => { if (window.confirm(S.resetConfirm)) session.reset(); }}>{S.reset}</button>
+          <p className="settings-note">{S.pacingNote}</p>
+          <button type="button" className="seg seg-danger" onClick={() => { if (window.confirm(S.resetConfirm)) session.reset(); }}>{S.reset}</button>
         </div>
       </header>
 
@@ -410,7 +479,7 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
             <Avatar coin={coin} size={44} />
             <div className="stage-id">
               <div className="stage-name">
-                {coin.meta.name} <span className="muted">${coin.meta.ticker}</span>
+                {coin.meta.name} <span className="muted stage-ticker">${coin.meta.ticker}</span>
               </div>
               <div className="muted lore">{coin.meta.lore}</div>
             </div>
@@ -441,13 +510,16 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
             )}
             {lane.phase === "live" && c.event === EVENT_NONE && !c.graduated && (
               <>
-                <span className="live-dot" /> <span className="muted">{S.timeLeft}</span> <b>{clock(secondsLeft)}</b>
-                <span className="bar"><span style={{ width: `${100 - (100 * c.tick) / maxTicks}%` }} /></span>
+                <span className="live-dot" /> <b>{S.timeLeft}</b> <span className="muted max-life">{S.maxLife(clock(secondsLeft))}</span>
               </>
             )}
             {lane.phase === "cooldown" && ended !== null && (
               <>
-                <span><b>{endLine(ended)}</b> · {S.nextCoinIn(wait + Math.max(0, session.breakSeconds - 3))}</span>
+                <span>
+                  <b>{endLine(ended)}</b>
+                  {ended.staked > 0n && <> · {S.coinNet} <b className={endedNet >= 0n ? "up" : "down"}>{signedUsdk(endedNet)}</b></>}
+                  {" · "}{S.nextCoinIn(wait + Math.max(0, session.breakSeconds - 3))}
+                </span>
                 <button type="button" className="link" onClick={() => setVerifying(ended)}>{S.verifyOpen}</button>
               </>
             )}
@@ -457,24 +529,20 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
             <Chart history={coin.history} marks={coin.marks} rugged={c.status === STATUS_RUGGED} version={session.version} />
             {c.status === STATUS_RUGGED && <div className="rug-stamp">{S.rugged}</div>}
             {c.status === STATUS_SETTLED && <div className="settle-note">{S.settled}</div>}
-            {lane.phase === "cooldown" && ended !== null && ended.staked > 0n && (
-              <div className={`coin-result ${endedNet >= 0n ? "up" : "down"}`}>
-                <span className="label">{S.coinNet}</span>
-                {signedUsdk(endedNet)}
+            {rugNote && (
+              <div className="rug-note" role="dialog" aria-label={S.terms.rug![0]}>
+                <p>{S.rugExplainer}</p>
+                <button type="button" className="btn btn-ghost" onClick={closeRugNote}>{S.tutorialNext}</button>
               </div>
             )}
           </div>
 
           <div className="class-box">
-            <div className="class-title">
+            <span className="class-title">
               <Risk profile={lane.profile} />
               <Term k={PROFILE_TERMS[lane.profile]!}>{S.profiles[lane.profile]}</Term>
-              <span className="class-risk">{S.profileRisk[lane.profile]}</span>
-            </div>
-            <div className="class-facts">
-              <span>{S.profileSwing(swingPct(session, lane.profile))}</span>
-              <span>{S.profileLife(lifeSeconds(session, lane.profile))}</span>
-            </div>
+            </span>
+            <span className="class-facts">{S.profileFacts(S.profileRisk[lane.profile]!, swingPct(session, lane.profile), lifeSeconds(session, lane.profile))}</span>
           </div>
 
           <div className="bag">
@@ -491,23 +559,6 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
           </div>
         </section>
 
-        {rugTip && session.firstRugSeen && (
-          <div className="tip tip-rug">
-            <p>{S.rugExplainer}</p>
-            <button type="button" className="btn btn-ghost" onClick={() => { setRugTip(false); store("aor.rug"); }}>{S.tutorialNext}</button>
-          </div>
-        )}
-        {tip !== null && (
-          <div className="tip">
-            <b>{tip.title}</b>
-            <p>{tip.text}</p>
-            <div className="tip-actions">
-              {tipStep > 0 && <button type="button" className="btn btn-ghost" onClick={() => (tipStep >= S.tutorial.length - 1 ? endTips() : setTipStep(tipStep + 1))}>{S.tutorialNext}</button>}
-              <button type="button" className="btn btn-ghost" onClick={endTips}>{S.tutorialSkip}</button>
-            </div>
-          </div>
-        )}
-
       </main>
 
       <aside className="col-side">
@@ -518,20 +569,39 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
 
         <section className="panel">
           <h3>{S.historyTitle}</h3>
-          {session.history.length === 0 ? <p className="muted">{S.historyEmpty}</p> : (
-            <ul className="history">
-              {session.history.map((f) => (
-                <li key={f.id} className={`p${f.profile}`}>
-                  <Avatar coin={f} size={24} />
-                  <span className="history-main">
-                    <b>${f.meta.ticker}</b> <span className="history-class">{S.profiles[f.profile]}</span>
-                    <span className="muted"> · {endLine(f)} · {S.peak(mult(f.peak))} · {S.life(Math.round(f.ticks / tps))}</span>
-                  </span>
-                  <span className={`history-net ${f.staked === 0n ? "muted" : f.paid >= f.staked ? "up" : "down"}`}>{f.staked === 0n ? S.noStake : signedUsdk(f.paid - f.staked)}</span>
-                  <button type="button" className="link" onClick={() => setVerifying(f)}>{S.verifyShort}</button>
-                </li>
-              ))}
-            </ul>
+          {session.history.length === 0 && myCoins.length === 0 ? <p className="muted">{S.historyEmpty}</p> : (
+            <>
+              {myCoins.length > 0 && (
+                <ul className="history">
+                  {myCoins.map((f) => (
+                    <li key={f.id} className={`p${f.profile}`}>
+                      <Avatar coin={f} size={24} />
+                      <span className="history-main">
+                        <b>${f.meta.ticker}</b> <span className="history-class">{S.profiles[f.profile]}</span>
+                        <span className="muted"> · {endLine(f)} · {S.peak(mult(f.peak))} · {S.life(Math.round(f.ticks / tps))}</span>
+                      </span>
+                      <span className={`history-net ${f.paid >= f.staked ? "up" : "down"}`}>{signedUsdk(f.paid - f.staked)}</span>
+                      <button type="button" className="link" onClick={() => setVerifying(f)}>{S.verifyShort}</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {otherCoins.length > 0 && (
+                <>
+                  <div className="history-sub">{S.historyOthers}</div>
+                  <ul className="history history-others">
+                    {otherCoins.map((f) => (
+                      <li key={f.id} className={`p${f.profile}`}>
+                        <span className="history-main">
+                          <b>${f.meta.ticker}</b> <span className="muted">· {endLine(f)} · {S.peak(mult(f.peak))}</span>
+                        </span>
+                        <button type="button" className="link" onClick={() => setVerifying(f)}>{S.verifyShort}</button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </>
           )}
         </section>
 
@@ -552,18 +622,24 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
         </p>
       </aside>
 
-      <footer className="controls">
+      <footer className={`controls ${holding ? "holding" : ""} ${stakesOpen ? "stakes-open" : ""}`}>
         <div className="pops" aria-live="polite">
           {pops.map((p) => (
             <div key={p.id} className={`pop pop-${p.tone}`}>{p.text}</div>
           ))}
         </div>
         {error !== null && <div className="toast" role="alert">{error}</div>}
-        {hasOpen && alive && (
-          <div className="row">
+        {tip !== null && (
+          <div className="tip">
+            <span><b>{tip.title}</b> {tip.text}</span>
+            <button type="button" className="tip-skip" onClick={endTips}>{S.tutorialSkip}</button>
+          </div>
+        )}
+        {holding && (
+          <div className="row row-sell">
             <button type="button" className={`btn btn-cash ${result >= 0n ? "cash-up" : "cash-down"}`} onClick={() => onSell(session.sellAll(focus))}>
               <span className="btn-main">{S.sellAll} {usdk(bag.value)}</span>
-              <span className="btn-sub">{signedUsdk(result)} · ${coin.meta.ticker} at {mult(c.price)}</span>
+              <span className="btn-sub">{signedUsdk(result)} · ${coin.meta.ticker} {mult(c.price)}</span>
             </button>
             <button type="button" className="btn btn-side" onClick={() => onSell(session.sell(focus, 5000n))}>{S.sellHalf}</button>
             <button type="button" className="btn btn-side" disabled={!bag.canInitials} title={S.takeInitialsHint} onClick={() => onSell(session.takeInitials(focus))}>{S.takeInitials}</button>
@@ -571,14 +647,19 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
         )}
         <div className="stakes" role="group" aria-label={S.stake}>
           {STAKES.map((s) => (
-            <button key={String(s)} type="button" className={`chip ${s === stake ? "chip-on" : ""}`} onClick={() => setStake(s)}>{chip(s)}</button>
+            <button key={String(s)} type="button" className={`chip ${s === stake ? "chip-on" : ""}`} onClick={() => { setStake(s); setStakesOpen(false); }}>{chip(s)}</button>
           ))}
         </div>
-        <div className="row">
-          <button type="button" className={`btn btn-buy ${hasOpen && alive ? "btn-buy-more" : ""}`} disabled={!alive} onClick={onBuy}>
-            <span className="btn-main">{alive ? (hasOpen ? S.buyMore : S.buyCta) : S.buyClosed}</span>
+        <div className="row row-buy">
+          <button type="button" className={`btn btn-buy ${holding ? "btn-buy-more" : ""}`} disabled={!alive} onClick={onBuy}>
+            <span className="btn-main">{alive ? (holding ? S.buyMore : S.buyCta) : S.buyClosed}</span>
             <span className="btn-sub">{alive ? S.buySub(coin.meta.ticker, usdk(stake), mult(c.price)) : S.nextCoinIn(wait + Math.max(0, session.breakSeconds - 3))}</span>
           </button>
+          {holding && (
+            <button type="button" className="btn btn-side stake-toggle" aria-expanded={stakesOpen} onClick={() => setStakesOpen(!stakesOpen)}>
+              {chip(stake)} ▾
+            </button>
+          )}
           {lane.phase === "prelaunch" && <button type="button" className="btn btn-side" onClick={() => session.skipWait(focus)}>{S.startNow}</button>}
         </div>
         <div className="muted fee">

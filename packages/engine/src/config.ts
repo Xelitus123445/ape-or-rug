@@ -69,37 +69,39 @@ export interface EngineConfig {
   readonly maxStake: bigint;
 }
 
-const r = (num: bigint, den: bigint): Rational => ({ num, den });
+const r = (num: bigint, den: bigint): Rational => Object.freeze({ num, den });
+const freezeAll = <T extends object>(items: readonly T[]): readonly T[] => Object.freeze(items.map((x) => Object.freeze(x)));
 
-export const DEFAULT_CONFIG: EngineConfig = {
+/** Frozen at every level: every default engine and Ledger share it. */
+export const DEFAULT_CONFIG: EngineConfig = Object.freeze({
   ticksPerSecond: 4,
   maxTicks: 2400,
   coinsPerRound: 3,
-  profiles: [
+  profiles: freezeAll([
     { hazard: r(1n, 160n), sigmaPpm: 60_000n },
     { hazard: r(1n, 360n), sigmaPpm: 35_000n },
     { hazard: r(1n, 720n), sigmaPpm: 20_000n },
-  ],
-  events: [
+  ]) as EngineConfig["profiles"],
+  events: freezeAll([
     { hMul: r(3n, 1n), sMul: r(3n, 2n) },
     { hMul: r(1n, 2n), sMul: r(13n, 10n) },
     { hMul: r(1n, 1n), sMul: r(2n, 1n) },
-  ],
+  ]) as EngineConfig["events"],
   eventStart: r(1n, 120n),
   eventMinTicks: 20,
   eventMaxTicks: 40,
-  graduation: {
+  graduation: Object.freeze({
     price: 10n * PRICE_SCALE,
     hMul: r(1n, 2n),
     sMul: r(7n, 10n),
-  },
+  }),
   entryFeeBps: 300n,
   maxPayoutMult: 200n,
   // 250.00 play coins: with at most 2 minor units lost to rounding per bet
   // this keeps rounding loss below 0.01% of stake (math spec 10.4).
   minStake: 25_000n,
   maxStake: 1_000_000n,
-};
+});
 
 export const REGIME_COUNT = 24;
 
