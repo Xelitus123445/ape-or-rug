@@ -149,6 +149,17 @@ position only.
   the `i`-th profile of that order.
 - `roundId` is 1–48 characters of `[A-Za-z0-9_-]`; `serverSeed` is exactly
   32 bytes.
+- **Lane mode (what the game uses since M2).** Each coin is its own
+  one-coin round with its own `serverSeed` and commit. The lane fixes the
+  profile, so there is no profile draw: the profile is written into the
+  round id (`degen-17`, `mid-4`, `runner-2`: profile name, then the coin's
+  number on that lane), and since the commit covers the round id it covers
+  the profile too. The coin's stream is `roundId:0:tick:n` exactly as above.
+  A verifier replays the coin from the revealed seed, the round id and the
+  profile named in it. The three-coin round with a drawn profile order,
+  described above, stays in the engine and is what the simulator of §7 runs;
+  both use the same per-coin price process, so the simulation results apply
+  to lane mode unchanged.
 
   *(Amended in M1. The first draft used one digest per draw. One digest per
   tick gives the same guarantees and makes the 5,000,000-bet simulation of §7

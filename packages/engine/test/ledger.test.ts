@@ -137,6 +137,25 @@ describe("ledger basics", () => {
     }
   });
 
+  it("clears a coin slot only when nothing in it is open", () => {
+    const l = new Ledger(cfg, START);
+    const a = l.buy(0, 100_000n, STATUS_ALIVE, X, 0);
+    const b = l.buy(1, 100_000n, STATUS_ALIVE, X, 0);
+    if (!a.ok || !b.ok) throw new Error("buy failed");
+    // Open position: the slot cannot be cleared, so nothing can carry over to a new coin.
+    expect(l.clearClosed(0)).toBe(false);
+    expect(l.positions.length).toBe(2);
+    l.onTick(0, STATUS_RUGGED, 0n);
+    expect(l.clearClosed(0)).toBe(true);
+    expect(l.positions.map((p) => p.coin)).toEqual([1]);
+    expect(l.get(a.value.id)).toBeUndefined();
+    // A new coin in the cleared slot starts from nothing and old ids are dead.
+    const c = l.buy(0, 100_000n, STATUS_ALIVE, X, 0);
+    expect(c.ok && c.value.id !== a.value.id).toBe(true);
+    expect(l.sell(a.value.id, 10_000n, STATUS_ALIVE, 5n * X)).toEqual({ ok: false, error: "no_such_position" });
+    expect(l.balance + l.house).toBe(START);
+  });
+
   it("counts earlier partial sells toward the cap", () => {
     const l = new Ledger(cfg, START);
     const r = l.buy(0, 100_000n, STATUS_ALIVE, X, 0);

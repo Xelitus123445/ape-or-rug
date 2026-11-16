@@ -16,17 +16,30 @@ before it rugs.
 Design for the second group. If a first-time player needs an explanation
 longer than one sentence, the screen is wrong.
 
-## 3. Round structure
+## 3. Lanes and coins
 
-A round is shared by everyone in the room and lasts a few minutes.
+*(Changed during M2 at the owner's request. The first draft had shared
+rounds: three coins launched together and the next round waited for all of
+them to end, which left players waiting minutes for the calm coin. The
+engine can still generate such rounds; the game no longer uses them.)*
 
-1. **Launch.** Three coins start at price 1.00x. Each has a generated ticker,
-   name and avatar, and one of three risk profiles shown on its card:
-   - `degen` — wild candles, short life
-   - `mid` — balanced
-   - `runner` — calmer, lives longer
-2. **Buy.** A player can buy any coin at any time while it is alive, and can
-   hold several coins at once. Buying has an entry fee (see math spec).
+The room has three lanes that never stop. Each lane has a fixed risk profile
+and runs one coin at a time:
+
+- `degen` lane — wild candles, short life
+- `mid` lane — balanced
+- `runner` lane — calmer, lives longer
+
+So a newcomer always sees the same three choices, and each lane moves at its
+own pace: when a coin ends, only its lane takes a break, and the other two
+keep going.
+
+1. **Launch.** A lane shows its next coin at 1.00x with a generated ticker,
+   name and avatar and a short countdown, then the coin goes live. Every coin
+   has its own seed and its own published fingerprint (math spec §6).
+2. **Buy.** A player can buy a coin while it waits to launch (at 1.00x) and
+   at any time while it is alive, and can hold coins on several lanes at
+   once. Buying has an entry fee (see math spec).
 3. **Life.** The price moves every tick. Events appear on the coin card and in
    the feed:
    - `DEV_SOLD` — rug risk up, volatility up
@@ -40,25 +53,37 @@ A round is shared by everyone in the room and lasts a few minutes.
    **Take initials** (sell exactly enough to get the original stake back and
    keep the rest).
 6. **Rug.** At a random tick the coin goes to zero. Open positions in it are
-   lost. Other coins keep running.
-7. **End.** The round ends when all three coins have rugged or settled. A short
-   summary shows each player's result, then the next round starts after a
-   countdown.
+   lost. The other lanes keep running.
+7. **Next coin.** The ended coin stays on screen for a moment with the
+   player's result on it and its seed revealed, then the lane shows its next
+   coin and counts down to launch. The break between coins is a pacing
+   setting (5, 10 or 20 seconds in the prototype). Nothing carries over from
+   one coin to the next on a lane.
 
-Rare case: a coin that survives to the maximum round length is settled, and
-all open positions are sold at the current price.
+Rare case: a coin that survives to the maximum length (2400 ticks) is
+settled, and all open positions are sold at the current price.
+
+Pacing has two settings that do not touch the odds: the tick rate (4, 6 or 8
+price moves per second) and the break between coins. The math is defined per
+tick, so every setting is the same game.
 
 ## 4. Screen layout (mobile first)
 
-- **Top:** balance (play money), "Demo — play money" label, round timer.
-- **Middle:** three coin cards side by side or in a swipeable row. Each card
-  shows ticker, avatar, profile badge, live chart, current multiplier, active
-  event, and the player's position with unrealised result.
-- **Bottom:** stake selector, Buy button for the focused coin, and for open
-  positions: Sell all, Sell %, Take initials.
-- **Feed:** real players' buys and sells in this round, and events.
-- **After the round:** result card with the best and worst moment
-  ("sold $GIGACAT at 31x", "rugged on $BONKFATHER at 4x").
+- **Top:** balance (play money), session result, "Demo — play money" label
+  and 18+ notice. Speed and break settings sit behind a gear on a phone.
+- **Lanes:** three coin cards side by side, colour-coded by profile. Each
+  card shows the profile with a risk meter, ticker, avatar, a small live
+  chart, the current multiplier, the active event or the countdown, and the
+  value of the player's bag.
+- **Stage:** the focused coin with a candlestick chart, the active event and
+  what it does, the coin's time left, and plain facts about its profile
+  (typical move per tick, average life).
+- **Bottom (right-hand column on a desktop):** cash out with the live value,
+  sell 50%, take initials, stake chips, and the buy button.
+- **Reference panels:** the three profiles side by side with the reminder
+  that all three pay back the same on average; ended coins, each with its
+  result and its fairness check; and the feed of the player's own actions
+  and the coins' events.
 
 ## 5. Social layer
 

@@ -487,7 +487,10 @@ export class GameSession {
   verify(coin: FinishedCoin): Verification {
     const seed = fromHex(coin.seed);
     const playedHash = roundHash({ roundId: coin.roundId, coins: [{ coinIndex: 0, profile: coin.profile, ticks: coin.records }] });
-    const recomputedHash = roundHash(generateCoinRound(this.engine, seed, coin.roundId, coin.profile));
+    // The profile for the replay is read from the round id, which the commit
+    // covers, not from what the screen claimed. An unknown name fails the check.
+    const named = PROFILE_NAMES.findIndex((name) => coin.roundId.startsWith(`${name}-`));
+    const recomputedHash = named < 0 ? "" : roundHash(generateCoinRound(this.engine, seed, coin.roundId, named));
     return { commitOk: verifyCommit(seed, coin.roundId, coin.commit), roundOk: playedHash === recomputedHash, playedHash, recomputedHash };
   }
 }

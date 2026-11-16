@@ -257,6 +257,7 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState<FinishedCoin | null>(null);
   const [showGlossary, setShowGlossary] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [tipStep, setTipStep] = useState(() => (remember("aor.tips") ? -1 : 0));
   const [rugTip, setRugTip] = useState(() => !remember("aor.rug"));
   const [muted, setMuted] = useState(() => remember("aor.muted"));
@@ -339,6 +340,8 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
   const maxTicks = session.engine.config.maxTicks;
   const secondsLeft = (maxTicks - c.tick) / tps;
   const tip = tipStep >= 0 ? S.tutorial[tipStep]! : null;
+  // Launches happen all the time on three lanes; they would drown the rest of the feed.
+  const feedLines = session.feed.filter((f) => f.kind !== "launch").slice(0, 12);
   const ended = lane.ended;
   const endedNet = ended !== null ? ended.paid - ended.staked : 0n;
 
@@ -350,13 +353,15 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
             <span className="logo">
               <span className="logo-a">{S.brandA}</span> <span className="logo-or">{S.brandOr}</span> <span className="logo-b">{S.brandB}</span>
             </span>
-            <span className="pill pill-demo">{S.demoLabel}</span>
-            <span className="pill">{S.adultNotice}</span>
+            <span className="pills">
+              <span className="pill pill-demo">{S.demoLabel}</span>
+              <span className="pill">{S.adultNotice}</span>
+            </span>
           </div>
           <div className="top-actions">
             <button type="button" className="icon-btn" onClick={toggleSound} aria-label={muted ? S.soundOff : S.soundOn} title={muted ? S.soundOff : S.soundOn}>{muted ? "🔇" : "🔊"}</button>
             <button type="button" className="icon-btn" onClick={() => setShowGlossary(true)} aria-label={S.glossary} title={S.glossary}>?</button>
-            <button type="button" className="icon-btn icon-text" onClick={() => { if (window.confirm(S.resetConfirm)) session.reset(); }}>{S.reset}</button>
+            <button type="button" className={`icon-btn gear ${showSettings ? "gear-on" : ""}`} onClick={() => setShowSettings(!showSettings)} aria-label={S.settings} aria-expanded={showSettings} title={S.settings}>⚙</button>
           </div>
         </div>
         <div className="wallet">
@@ -365,11 +370,11 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
             <div className="balance">{usdk(session.balance)}</div>
           </div>
           <div className="wallet-right">
-            <div className="label">{S.session} · {S.coinsPlayed(session.coinsPlayed)}</div>
+            <div className="label">{S.session}<span className="wide-only"> · {S.coinsPlayed(session.coinsPlayed)}</span></div>
             <div className={`session-net ${sessionNet >= 0n ? "up" : "down"}`}>{signedUsdk(sessionNet)}</div>
           </div>
         </div>
-        <div className="settings">
+        <div className={`settings ${showSettings ? "open" : ""}`}>
           <div className="setting" role="group" aria-label={S.speed} title={S.paceHint(tps)}>
             <span className="label">{S.speed}</span>
             {PACES.map((p) => (
@@ -386,6 +391,7 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
               </button>
             ))}
           </div>
+          <button type="button" className="seg" onClick={() => { if (window.confirm(S.resetConfirm)) session.reset(); }}>{S.reset}</button>
         </div>
       </header>
 
@@ -531,9 +537,9 @@ export function App({ seedSource = randomSeed }: { seedSource?: () => Uint8Array
 
         <section className="panel feed">
           <h3>{S.feedTitle}</h3>
-          {session.feed.length === 0 ? <p className="muted">{S.feedEmpty}</p> : (
+          {feedLines.length === 0 ? <p className="muted">{S.feedEmpty}</p> : (
             <ul>
-              {session.feed.slice(0, 12).map((f) => (
+              {feedLines.map((f) => (
                 <li key={f.id} className={`feed-${f.kind}`}>{feedText(f)}</li>
               ))}
             </ul>

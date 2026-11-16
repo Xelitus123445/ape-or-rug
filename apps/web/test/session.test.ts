@@ -83,6 +83,9 @@ describe("game session (lanes)", () => {
     // A coin checked against another coin's commit fails.
     const [a, b] = s.history;
     expect(s.verify({ ...a!, commit: b!.commit }).commitOk).toBe(false);
+    // A coin shown under another profile than its round id names does not replay.
+    expect(s.verify({ ...a!, profile: (a!.profile + 1) % 3 }).roundOk).toBe(false);
+    expect(s.verify({ ...a!, roundId: `x${a!.roundId}` }).roundOk).toBe(false);
   });
 
   it("moves the balance exactly as the engine's accounting says", () => {

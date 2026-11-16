@@ -3,6 +3,17 @@
 Build in milestones. Each one ends with acceptance criteria. Do not start the
 next milestone until the current one passes.
 
+**Lane mode (since M2).** The game no longer runs shared three-coin rounds;
+it runs three lanes with one coin each (design doc §3). Wherever this plan
+says "round", read it as "coin on a lane": M2's seed reveal and verify view
+are per coin; M3's server runs three lane loops, sends no future ticks and
+no seed of a coin before that coin ends, and its "20 consecutive rounds"
+sync test becomes 20 consecutive coins on every lane.
+
+**Order actually followed.** M2 work started before M1's two reviews were
+finished, at the owner's request, to get a playable screen sooner. M1 is
+not closed until `math-reviewer` reports PASS.
+
 ## Stack
 
 - pnpm workspaces, TypeScript strict

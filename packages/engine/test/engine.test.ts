@@ -7,7 +7,7 @@ import {
   STATUS_RUGGED,
   STATUS_SETTLED,
 } from "../src/config.ts";
-import { CoinStream, RoundKey, commitOf, createEngine, generateRound, launchCoin, roundHash, stepCoin, verifyCommit } from "../src/engine.ts";
+import { CoinStream, RoundKey, commitOf, createEngine, generateCoinRound, generateRound, launchCoin, roundHash, stepCoin, verifyCommit } from "../src/engine.ts";
 import { fromHex, sha256, toHex } from "../src/sha256.ts";
 import { GOLDEN_ROUNDS } from "./golden.ts";
 
@@ -110,6 +110,29 @@ describe("round generation", () => {
       stepCoin(engine, stream, c);
       expect(c).toEqual(frozen);
     }
+  });
+
+  it("generates a single coin for lane mode, reproducibly and with the given profile", () => {
+    for (const profile of [0, 1, 2]) {
+      const a = generateCoinRound(engine, seedOf(40 + profile), `lane-${profile}`, profile);
+      const b = generateCoinRound(engine, seedOf(40 + profile), `lane-${profile}`, profile);
+      expect(roundHash(a)).toBe(roundHash(b));
+      expect(a.coins.length).toBe(1);
+      expect(a.coins[0]!.profile).toBe(profile);
+      expect(a.coins[0]!.ticks[0]!.price).toBe(PRICE_SCALE);
+      const last = a.coins[0]!.ticks[a.coins[0]!.ticks.length - 1]!;
+      expect(last.status === STATUS_RUGGED || last.status === STATUS_SETTLED).toBe(true);
+      // Same seed and id under another profile is a different coin.
+      expect(roundHash(generateCoinRound(engine, seedOf(40 + profile), `lane-${profile}`, (profile + 1) % 3))).not.toBe(roundHash(a));
+      // It is the engine's ordinary stream for coin 0 of that round id.
+      const stream = new CoinStream(new RoundKey(seedOf(40 + profile), `lane-${profile}`), 0);
+      const c = launchCoin(profile);
+      for (let t = 1; t < a.coins[0]!.ticks.length; t++) {
+        stepCoin(engine, stream, c);
+        expect(c.price).toBe(a.coins[0]!.ticks[t]!.price);
+      }
+    }
+    expect(() => generateCoinRound(engine, seedOf(1), "lane", 3)).toThrow();
   });
 
   it("commit-reveal: the seed hashes to the commit", () => {
