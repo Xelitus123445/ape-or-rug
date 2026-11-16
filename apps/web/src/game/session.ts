@@ -10,7 +10,6 @@ import {
   EVENT_NONE,
   Ledger,
   PRICE_SCALE,
-  PROFILE_NAMES,
   RoundKey,
   STATUS_ALIVE,
   STATUS_RUGGED,
@@ -19,6 +18,8 @@ import {
   createEngine,
   fromHex,
   generateCoinRound,
+  laneProfile,
+  laneRoundId,
   launchCoin,
   roundHash,
   snapshot,
@@ -265,7 +266,7 @@ export class GameSession {
     if (!this.ledger.clearClosed(lane.index)) throw new Error("lane still has an open position");
     const seed = this.newSeed();
     lane.coinNo++;
-    lane.roundId = `${PROFILE_NAMES[lane.profile]}-${lane.coinNo}`;
+    lane.roundId = laneRoundId(lane.profile, lane.coinNo);
     lane.commit = commitOf(seed, lane.roundId);
     const stream = new CoinStream(new RoundKey(seed, lane.roundId), 0);
     const state = launchCoin(lane.profile);
@@ -489,8 +490,7 @@ export class GameSession {
     const playedHash = roundHash({ roundId: coin.roundId, coins: [{ coinIndex: 0, profile: coin.profile, ticks: coin.records }] });
     // The profile for the replay is read from the round id, which the commit
     // covers, not from what the screen claimed. An unknown name fails the check.
-    const named = PROFILE_NAMES.findIndex((name) => coin.roundId.startsWith(`${name}-`));
-    const recomputedHash = named < 0 ? "" : roundHash(generateCoinRound(this.engine, seed, coin.roundId, named));
+    const recomputedHash = laneProfile(coin.roundId) < 0 ? "" : roundHash(generateCoinRound(this.engine, seed, coin.roundId));
     return { commitOk: verifyCommit(seed, coin.roundId, coin.commit), roundOk: playedHash === recomputedHash, playedHash, recomputedHash };
   }
 }

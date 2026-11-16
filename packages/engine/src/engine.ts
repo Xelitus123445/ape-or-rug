@@ -6,6 +6,7 @@ import {
   DEFAULT_CONFIG,
   EVENT_NONE,
   PRICE_SCALE,
+  PROFILE_NAMES,
   REGIME_COUNT,
   STATUS_ALIVE,
   STATUS_RUGGED,
@@ -347,12 +348,32 @@ export function generateRound(engine: Engine, serverSeed: Uint8Array, roundId: s
   return { roundId, coins };
 }
 
+/** Round id of the n-th coin on a lane: the profile name, a dash, the number. */
+export function laneRoundId(profile: number, coinNo: number): string {
+  if (profile !== 0 && profile !== 1 && profile !== 2) throw new Error("laneRoundId: bad profile");
+  if (!isCount(coinNo, 1, 999_999_999)) throw new Error("laneRoundId: bad coin number");
+  return `${PROFILE_NAMES[profile]}-${coinNo}`;
+}
+
+/** Profile named by a lane round id, or -1 if the id is not a lane round id. */
+export function laneProfile(roundId: string): number {
+  if (typeof roundId !== "string") return -1;
+  for (let p = 0; p < PROFILE_NAMES.length; p++) {
+    const prefix = `${PROFILE_NAMES[p]}-`;
+    if (roundId.startsWith(prefix) && /^[1-9][0-9]{0,8}$/.test(roundId.slice(prefix.length))) return p;
+  }
+  return -1;
+}
+
 /**
  * A single coin played on its own, for the lane mode where every coin has its
- * own seed and commit. The profile is fixed by the lane, not drawn; the caller
- * puts it into the round id so that the commit covers it. Stream index is 0.
+ * own seed and commit. The profile is not an argument: it is read from the
+ * round id, and the commit covers the round id, so the commit fixes the
+ * profile too. Stream index is 0.
  */
-export function generateCoinRound(engine: Engine, serverSeed: Uint8Array, roundId: string, profile: number): Round {
+export function generateCoinRound(engine: Engine, serverSeed: Uint8Array, roundId: string): Round {
+  const profile = laneProfile(roundId);
+  if (profile < 0) throw new Error("generateCoinRound: round id must be <profile>-<number>");
   const stream = new CoinStream(new RoundKey(serverSeed, roundId), 0);
   const c = launchCoin(profile);
   const ticks: TickRecord[] = [snapshot(c)];

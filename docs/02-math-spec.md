@@ -77,9 +77,15 @@ rest of its life: `h * 0.5`, `s * 0.7`, stacking with events.
 Event timing and type are drawn from the round's RNG stream and never depend
 on players.
 
-Round limit: `MAX_TICKS = 2400` (10 minutes). A coin still alive then is
-`settled`: open positions are sold at the current price. With the hazards
-above this is rare. It is a settlement, not a rug, so §3 still holds.
+Round limit: `MAX_TICKS = 2400` (10 minutes at 4 ticks per second). A coin
+still alive then is `settled`: open positions are sold at the current price.
+Measured over 11.5 million coins: 0.007% of degen coins, 0.70% of mid coins
+and 4.7% of runner coins reach the limit, so for a runner it is uncommon
+rather than rare. It is a settlement, not a rug, so §3 still holds.
+
+The "mean life" column above is the base value `1 / h`. Measured mean lives
+are 41 s, 90 s and 166 s: events and graduation shift them a little, and the
+limit cuts the runner's tail.
 
 ## 5. Positions, fees, caps
 
@@ -155,8 +161,10 @@ position only.
   round id (`degen-17`, `mid-4`, `runner-2`: profile name, then the coin's
   number on that lane), and since the commit covers the round id it covers
   the profile too. The coin's stream is `roundId:0:tick:n` exactly as above.
-  A verifier replays the coin from the revealed seed, the round id and the
-  profile named in it. The three-coin round with a drawn profile order,
+  A verifier replays the coin from the revealed seed and the round id alone;
+  the engine reads the profile out of the round id and refuses an id that
+  does not name one, so a coin cannot be shown under one profile and
+  verified under another. The three-coin round with a drawn profile order,
   described above, stays in the engine and is what the simulator of §7 runs;
   both use the same per-coin price process, so the simulation results apply
   to lane mode unchanged.
