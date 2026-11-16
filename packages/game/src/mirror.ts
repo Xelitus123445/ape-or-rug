@@ -7,7 +7,7 @@ import { BPS, PRICE_SCALE, UNIT_SCALE, ceilDiv, createEngine, launchCoin, snapsh
 import type { Engine, Position, TickRecord } from "@ape/engine";
 import { PACES, WAIT_UNITS } from "./constants.ts";
 import type { Pace } from "./constants.ts";
-import { decodeServer, encode } from "./protocol.ts";
+import { decodeServer, encode, unpackTick } from "./protocol.ts";
 import type { ActionError, BoardRow, CoinMeta, FeedItem, FinishedCoin, LanePhase, LaneView, MeView, RoomSettings, ServerMsg } from "./protocol.ts";
 import { verifyCoin } from "./verify.ts";
 import type { Verification } from "./verify.ts";
@@ -49,7 +49,7 @@ const HISTORY_KEEP = 40;
 const FEED_KEEP = 60;
 
 function liveCoin(view: LaneView): LiveCoin {
-  const records = view.records.length > 0 ? view.records.slice() : [snapshot(launchCoin(view.profile))];
+  const records = view.records.length > 0 ? view.records.map(unpackTick) : [snapshot(launchCoin(view.profile))];
   return {
     lane: view.index,
     meta: view.meta,
@@ -234,11 +234,16 @@ export class RoomMirror {
         this.you = m.you;
         this.code = m.code;
         this.settings = m.settings;
+        // Coins already in the list (after a reconnect) keep the ticks this client saw live.
+        const known = new Map(this.history.map((f) => [f.roundId, f]));
+        const fresh = m.history.map((f) => {
+          const k = known.get(f.roundId);
+          return k !== undefined && k.records.length > 0 ? { ...f, records: k.records } : f;
+        });
+        const ids = new Set(fresh.map((f) => f.roundId));
+        this.history = [...fresh, ...this.history.filter((f) => !ids.has(f.roundId))].sort((a, b) => b.id - a.id).slice(0, HISTORY_KEEP);
         this.lanes = m.lanes.map((v) => this.fromView(v));
         this.#waits = m.lanes.map((v) => v.waitUnits);
-        // Coins already in the list stay; the server's copy wins for the ones it still has.
-        const ids = new Set(m.history.map((f) => f.id));
-        this.history = [...m.history, ...this.history.filter((f) => !ids.has(f.id))].sort((a, b) => b.id - a.id).slice(0, HISTORY_KEEP);
         this.feed = m.feed.slice();
         this.me = m.me;
         this.board = m.board.slice();
@@ -265,18 +270,22 @@ export class RoomMirror {
         const l = this.lanes[m.lane];
         if (l === undefined || l.roundId !== m.roundId) return;
         const c = l.coin;
-        c.records.push(m.rec);
-        c.history.push(Number(m.rec.price) / Number(PRICE_SCALE));
-        c.state = m.rec;
+        const rec = unpackTick(m.rec);
+        c.records.push(rec);
+        c.history.push(Number(rec.price) / Number(PRICE_SCALE));
+        c.state = rec;
         return;
       }
       case "end": {
         const l = this.lanes[m.lane];
+        let coin = m.coin;
         if (l !== undefined && l.roundId === m.coin.roundId) {
+          // The ticks this client was sent live are the ones the fairness check replays against.
+          coin = { ...m.coin, records: l.coin.records.slice() };
           l.phase = "cooldown";
-          l.ended = m.coin;
+          l.ended = coin;
         }
-        this.history.unshift(m.coin);
+        this.history.unshift(coin);
         if (this.history.length > HISTORY_KEEP) this.history.length = HISTORY_KEEP;
         this.coinsPlayed++;
         return;
@@ -309,7 +318,14 @@ export class RoomMirror {
   }
 
   private fromView(v: LaneView): MirrorLane {
-    return { index: v.index, profile: v.profile, phase: v.phase, coinNo: v.coinNo, roundId: v.roundId, commit: v.commit, coin: liveCoin(v), ended: v.ended };
+    const coin = liveCoin(v);
+    // A lane in cooldown shows its ended coin; its records are the lane's own.
+    const ended = v.ended !== null && v.ended.roundId === v.roundId ? { ...v.ended, records: coin.records.slice() } : v.ended;
+    if (ended !== null) {
+      const i = this.history.findIndex((f) => f.roundId === ended.roundId);
+      if (i >= 0) this.history[i] = ended;
+    }
+    return { index: v.index, profile: v.profile, phase: v.phase, coinNo: v.coinNo, roundId: v.roundId, commit: v.commit, coin, ended };
   }
 
   /** Chart markers for this player's own trades on the coin now on the lane. */

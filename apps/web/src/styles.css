@@ -406,3 +406,4 @@ code { font-family: ui-monospace, Consolas, monospace; }
 @media (max-width: 380px) {
   .pills .pill:not(.pill-demo) { display: none; }
 }
+.net-fatal { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; background: #2a141b; color: var(--text); border-bottom-color: var(--down); }

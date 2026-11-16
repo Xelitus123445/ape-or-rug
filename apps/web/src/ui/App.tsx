@@ -452,7 +452,13 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
 
   return (
     <div className="app">
-      {m.status !== "open" && <div className="net-banner" role="status">{S.reconnecting}</div>}
+      {m.fatal !== null ? (
+        <div className="net-banner net-fatal" role="alert">
+          <span>{S.fatal[m.fatal] ?? m.fatal}</span>
+          {m.fatal !== "room_full" && <button type="button" className="btn btn-ghost" onClick={() => conn.retry()}>{S.retry}</button>}
+          <button type="button" className="btn btn-ghost" onClick={onNewRoom}>{S.newRoom}</button>
+        </div>
+      ) : m.status !== "open" && <div className="net-banner" role="status">{S.reconnecting}</div>}
       <header className="top">
         <div className="top-row">
           <Brand />

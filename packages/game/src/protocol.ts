@@ -33,7 +33,35 @@ export interface FinishedCoin {
   readonly paid: bigint;
 }
 
-/** One lane as a joining player first sees it. Records are ticks already played. */
+/**
+ * A tick on the wire: [tick, price digits, status, tickEvent, event,
+ * eventLeft, flags] with flags 1 graduated, 2 eventStarted, 4 justGraduated.
+ * About a quarter of the size of the same record as a JSON object.
+ */
+export type PackedTick = readonly [number, string, number, number, number, number, number];
+
+export function packTick(r: TickRecord): PackedTick {
+  return [r.tick, r.price.toString(), r.status, r.tickEvent, r.event, r.eventLeft, (r.graduated ? 1 : 0) | (r.eventStarted ? 2 : 0) | (r.justGraduated ? 4 : 0)];
+}
+
+export function unpackTick(p: PackedTick): TickRecord {
+  return {
+    tick: p[0],
+    price: BigInt(p[1]),
+    status: p[2],
+    tickEvent: p[3],
+    event: p[4],
+    eventLeft: p[5],
+    graduated: (p[6] & 1) !== 0,
+    eventStarted: (p[6] & 2) !== 0,
+    justGraduated: (p[6] & 4) !== 0,
+  };
+}
+
+/**
+ * One lane as a joining player first sees it. Records are ticks already
+ * played. `ended` comes without records: they are the lane's own records.
+ */
 export interface LaneView {
   readonly index: number;
   readonly profile: number;
@@ -43,7 +71,7 @@ export interface LaneView {
   readonly roundId: string;
   readonly commit: string;
   readonly meta: CoinMeta;
-  readonly records: readonly TickRecord[];
+  readonly records: readonly PackedTick[];
   readonly ended: FinishedCoin | null;
 }
 
@@ -124,7 +152,9 @@ export type ServerMsg =
       /** Highest action number already used by this seat; the next one must be larger. */
       readonly lastSeq: number;
     }
-  | { readonly t: "step"; readonly lane: number; readonly roundId: string; readonly rec: TickRecord }
+  | { readonly t: "step"; readonly lane: number; readonly roundId: string; readonly rec: PackedTick }
+  // "end" and the welcome's history carry no tick records: the client keeps
+  // the ticks it was sent live, and replays older coins from their seed.
   | { readonly t: "launch"; readonly lane: number; readonly roundId: string }
   | { readonly t: "coin"; readonly lane: LaneView }
   | { readonly t: "end"; readonly lane: number; readonly coin: FinishedCoin }
@@ -167,12 +197,33 @@ export function decodeServer(text: string): ServerMsg[] {
 // --- Client messages: the server trusts nothing and checks every field. ---
 
 const NICK_RE = /^[\p{L}\p{N} _.\-]{2,16}$/u;
+const SCRIPTS = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u];
 
-/** Trimmed, single-spaced nickname, or null if it is not allowed. */
+/**
+ * Trimmed, single-spaced nickname, or null if it is not allowed. Full-width
+ * and other compatibility forms are folded (NFKC), and letters from two
+ * scripts in one name (a Cyrillic "А" inside "Ana") are refused, so one
+ * player cannot pose as another.
+ */
 export function cleanNick(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.length > 64) return null;
-  const nick = raw.normalize("NFC").trim().replace(/\s+/g, " ");
-  return NICK_RE.test(nick) ? nick : null;
+  const nick = raw.normalize("NFKC").trim().replace(/\s+/g, " ");
+  if (!NICK_RE.test(nick)) return null;
+  const letters = [...nick].filter((ch) => /\p{L}/u.test(ch));
+  const used = SCRIPTS.filter((re) => letters.some((ch) => re.test(ch))).length;
+  const other = letters.some((ch) => !SCRIPTS.some((re) => re.test(ch)));
+  return used + (other ? 1 : 0) > 1 ? null : nick;
+}
+
+// Cyrillic and Greek letters that look like Latin ones.
+const LOOKALIKE: Record<string, string> = {
+  а: "a", в: "b", е: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t", у: "y", х: "x", і: "i", ј: "j", ѕ: "s",
+  α: "a", β: "b", ε: "e", ι: "i", κ: "k", ν: "v", ο: "o", ρ: "p", τ: "t", υ: "u", χ: "x", ζ: "z", η: "n",
+};
+
+/** What a nickname looks like, for telling apart two names that render the same. */
+export function nickSkeleton(nick: string): string {
+  return [...nick.normalize("NFKC").toLowerCase()].map((ch) => LOOKALIKE[ch] ?? ch).join("").replace(/0/g, "o").replace(/[1l]/g, "i");
 }
 
 function isSeq(v: unknown): v is number {

@@ -73,7 +73,7 @@ export const S = {
   createRoom: "Create a room",
   joinRoom: (code: string) => `Join room ${code}`,
   connecting: "Connecting…",
-  reconnecting: "Connection lost. Reconnecting… Your bags stay in the room.",
+  reconnecting: "Connection lost. Reconnecting… Your seat and bags are held for 10 minutes; open bags can still rug meanwhile.",
   fatal: {
     room_full: "This room is full: 5 players already.",
     bad_nick: "That nickname is not allowed. Use 2–16 letters or digits.",

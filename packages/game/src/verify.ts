@@ -31,15 +31,12 @@ export function verifyCoin(engine: Engine, coin: FinishedCoin): Verification {
     for (const t of ticks) if (t.price > peak) peak = t.price;
     const endPrice = last.status === STATUS_RUGGED ? ticks[ticks.length - 2]!.price : last.price;
     const recomputedHash = roundHash(replay);
+    const factsOk = coin.profile === profile && coin.status === last.status && coin.ticks === last.tick && coin.peak === peak && coin.endPrice === endPrice;
+    // A coin that ended before this player joined comes without ticks: only
+    // the facts shown about it (profile, end, peak, length) can be checked.
+    if (coin.records.length === 0) return { commitOk, roundOk: factsOk, playedHash: "", recomputedHash };
     const playedHash = roundHash({ roundId: coin.roundId, coins: [{ coinIndex: 0, profile: coin.profile, ticks: coin.records }] });
-    const factsOk =
-      coin.profile === profile &&
-      coin.status === last.status &&
-      coin.ticks === last.tick &&
-      coin.peak === peak &&
-      coin.endPrice === endPrice &&
-      sameRecords(coin.records, ticks);
-    return { commitOk, roundOk: playedHash === recomputedHash && factsOk, playedHash, recomputedHash };
+    return { commitOk, roundOk: playedHash === recomputedHash && factsOk && sameRecords(coin.records, ticks), playedHash, recomputedHash };
   } catch {
     return failed;
   }

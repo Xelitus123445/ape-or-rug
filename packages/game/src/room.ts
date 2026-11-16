@@ -41,7 +41,7 @@ import {
   WAIT_UNITS,
 } from "./constants.ts";
 import type { Pace } from "./constants.ts";
-import { cleanNick, encode, parseClient } from "./protocol.ts";
+import { cleanNick, encode, nickSkeleton, packTick, parseClient } from "./protocol.ts";
 import type { ActionError, BoardRow, ClientMsg, CoinMeta, FeedItem, FeedKind, FinishedCoin, LanePhase, LaneView, MeView, RoomSettings, ServerMsg } from "./protocol.ts";
 
 export interface RoomDeps {
@@ -182,8 +182,9 @@ export class Room {
 
   /** Sends what has queued up: one frame per player, in the order it happened. */
   flush(): void {
-    for (const pid of this.#dirtyMe) this.to(pid, { t: "me", me: this.meView(pid) });
+    const dirty = [...this.#dirtyMe];
     this.#dirtyMe.clear();
+    for (const pid of dirty) if (this.players.get(pid)?.online === true) this.to(pid, { t: "me", me: this.meView(pid) });
     const rows = this.board();
     const text = encode(rows);
     if (text !== this.#lastBoard) {
@@ -218,9 +219,10 @@ export class Room {
 
   // ----------------------------------------------------------------- views
 
+  /** An ended coin as one player gets it: their own result, no tick records (the client has them or replays them). */
   private finishedFor(stored: StoredCoin, pid: string): FinishedCoin {
     const r = stored.results.get(pid);
-    return r === undefined ? stored.coin : { ...stored.coin, staked: r.staked, paid: r.paid };
+    return { ...stored.coin, records: [], staked: r?.staked ?? 0n, paid: r?.paid ?? 0n };
   }
 
   private laneView(lane: RoomLane, pid: string): LaneView {
@@ -233,7 +235,7 @@ export class Room {
       roundId: lane.roundId,
       commit: lane.commit,
       meta: lane.meta,
-      records: lane.records.slice(),
+      records: lane.records.map(packTick),
       ended: lane.ended === null ? null : this.finishedFor(lane.ended, pid),
     };
   }
@@ -352,7 +354,7 @@ export class Room {
     const rec = snapshot(c);
     lane.records.push(rec);
     if (c.price > lane.peak) lane.peak = c.price;
-    this.broadcast({ t: "step", lane: lane.index, roundId: lane.roundId, rec });
+    this.broadcast({ t: "step", lane: lane.index, roundId: lane.roundId, rec: packTick(rec) });
     // Truthful events: each feed line mirrors a regime change the engine just made.
     if (c.eventStarted) this.push("event", lane, { event: c.tickEvent });
     if (c.justGraduated) this.push("graduated", lane);
@@ -434,9 +436,10 @@ export class Room {
       if (this.players.size >= MAX_PLAYERS) return { ok: false, error: "room_full" };
       const clean = cleanNick(nickRaw);
       if (clean === null) return { ok: false, error: "bad_nick" };
-      const taken = new Set([...this.players.values()].map((p) => p.nick.toLowerCase()));
+      // Two names that look the same on screen get told apart by a number.
+      const taken = new Set([...this.players.values()].map((p) => nickSkeleton(p.nick)));
       let nick = clean;
-      for (let i = 2; taken.has(nick.toLowerCase()); i++) nick = `${clean.slice(0, 13)} ${i}`;
+      for (let i = 2; taken.has(nickSkeleton(nick)); i++) nick = `${clean.slice(0, 13)} ${i}`;
       player = { id: `p${++this.#nextPlayer}`, nick, token: this.#deps.newToken(), ledger: new Ledger(DEFAULT_CONFIG, START_BALANCE), refills: 0, lastSeq: 0, online: true, leftAt: 0 };
       this.players.set(player.id, player);
     }
@@ -477,7 +480,11 @@ export class Room {
   private prune(): void {
     const now = this.#deps.now();
     for (const p of [...this.players.values()]) {
-      if (!p.online && now - p.leftAt > SEAT_HOLD_MS) this.players.delete(p.id);
+      if (!p.online && now - p.leftAt > SEAT_HOLD_MS) {
+        this.players.delete(p.id);
+        this.#dirtyMe.delete(p.id);
+        this.#queues.delete(p.id);
+      }
     }
   }
 

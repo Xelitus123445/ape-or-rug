@@ -334,9 +334,9 @@ describe("room: what leaves the server", () => {
         if (played !== undefined) expect(tick).toBeLessThanOrEqual(played);
       };
       for (const m of f.msgs) {
-        if (m.t === "step") check(m.roundId, m.rec.tick);
-        if (m.t === "coin") for (const r of m.lane.records) check(m.lane.roundId, r.tick);
-        if (m.t === "welcome") for (const l of m.lanes) for (const r of l.records) check(l.roundId, r.tick);
+        if (m.t === "step") check(m.roundId, m.rec[0]);
+        if (m.t === "coin") for (const r of m.lane.records) check(m.lane.roundId, r[0]);
+        if (m.t === "welcome") for (const l of m.lanes) for (const r of l.records) check(l.roundId, r[0]);
       }
     });
     expect(records).toBeGreaterThan(1000);

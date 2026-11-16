@@ -98,6 +98,17 @@ describe("server", () => {
     expect(back.mirror.holding(2).stake).toBe(STAKES[3]!);
   });
 
+  it("lets one address open only so many rooms, but join any number", async () => {
+    server = await startServer({ port: 0, staticDir: null, tickMs: () => 1000, roomsPerAddress: 2, log: () => {} });
+    const a = await connect(server.port, null, "Ana");
+    await connect(server.port, null, "Bo");
+    const third = await connect(server.port, null, "Cy");
+    expect(third.mirror.fatal).toBe("bad_room");
+    const joiner = await connect(server.port, a.mirror.code, "Dee");
+    expect(joiner.mirror.fatal).toBeNull();
+    expect(server.rooms.size).toBe(2);
+  });
+
   it("closes connections that do not say hello properly or flood the server", async () => {
     server = await startServer({ port: 0, staticDir: null, tickMs: () => 1000, log: () => {} });
     const bad = await connect(server.port, null, "a"); // nickname too short
