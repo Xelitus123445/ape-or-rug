@@ -121,6 +121,27 @@ Acceptance:
   (test that inspects every outbound message)
 - No bot or synthetic player activity anywhere in the feed
 
+Status (built): `packages/game` (room, protocol, client mirror),
+`apps/server`, lobby and room UI in `apps/web`. Decisions made while
+building, not in the original text:
+
+- The first player in a room is the host and sets pace and break for the
+  room, and can launch a waiting coin early; the host passes on if they drop.
+- No free reset in a room: a player can refill to the starting balance only
+  when they cannot afford the smallest stake and hold nothing, and refills
+  show on the leaderboard (result = equity minus every balance handed out).
+- A dropped player keeps their seat and open bags for 10 minutes; a reload
+  in the same tab returns to the same seat; a new tab is a new player.
+- Every order carries a rising number and the coin's round id: replayed,
+  duplicated or out-of-date orders are refused, and the order has no price
+  field at all.
+
+Acceptance tests: `packages/game/test/room.test.ts` (5 clients in sync for
+20 coins on every lane; late, replayed and forged orders; every outbound
+frame inspected for future ticks and unrevealed seeds; every trade in the
+feed traced to a real order) and `apps/server/test/server.test.ts` (the same
+over real sockets).
+
 ## M4 — Telemetry and playtest build
 
 Build:

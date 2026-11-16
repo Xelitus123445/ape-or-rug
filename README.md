@@ -10,6 +10,9 @@ project rules and `docs/` for the design, the math spec and the plan.
 - `packages/engine` — price engine, random stream, growth tables, position
   accounting. Pure, deterministic, integer-only.
 - `packages/sim` — strategy simulator that produces the RTP report.
+- `packages/game` — shared room logic: three lanes, one ledger per player, the wire protocol, and the client's mirror of a room.
+- `apps/server` — WebSocket room server (Node + `ws`, in memory). Authoritative: plays the ticks and executes every order at the price of the tick it is on.
+- `apps/web` — React client. Renders what the server sends; replays ended coins locally to verify them.
 - `docs/proofs/fairness.md` — why no strategy beats the entry fee.
 - `docs/reports/m1-rtp.md` — simulator output for milestone M1.
 
@@ -20,7 +23,8 @@ Requires Node 24 or newer and pnpm.
 | Command | What it does |
 | --- | --- |
 | `pnpm install` | Install dependencies |
-| `pnpm dev` | Start the single-player prototype at http://127.0.0.1:5173 |
+| `pnpm dev` | Start the room server (port 8787) and the web app at http://127.0.0.1:5173. Open the page, pick a nickname, create a room, send the `?room=` link to friends (up to 5) |
+| `pnpm build` then `pnpm start` | One process: the server also serves the built app at http://127.0.0.1:8787 (`PORT`, `HOST` from the environment) |
 | `pnpm test` | Unit, property and exact tests (about 10 s) |
 | `pnpm typecheck` | TypeScript strict check |
 | `pnpm sim --bets 5000000 --report docs/reports/m1-rtp.md` | Full strategy simulation (about 20 min on 10 threads) |
