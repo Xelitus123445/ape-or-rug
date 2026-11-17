@@ -381,8 +381,18 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   });
   const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: MAX_CLIENT_MESSAGE * 4 });
 
+  // Once per start: how the first player's address was found, without the address itself,
+  // so a deploy shows whether the host's proxy hides players behind one address.
+  let addressLogged = false;
   wss.on("connection", (ws, req) => {
     const address = clientAddress(req);
+    if (!addressLogged) {
+      addressLogged = true;
+      const direct = req.socket.remoteAddress ?? "?";
+      const forwarded = req.headers["x-forwarded-for"] !== undefined;
+      const via = address === direct ? (isPrivateAddress(direct) ? "socket (private, no usable header: players may share one address)" : "socket (public)") : "X-Forwarded-For";
+      log(`address check: socket ${isPrivateAddress(direct) ? "private" : "public"}, header ${forwarded ? "present" : "absent"}, player address from ${via}`);
+    }
     let seat: { h: Hosted; pid: string } | null = null;
     let tokens = BURST;
     let last = Date.now();
