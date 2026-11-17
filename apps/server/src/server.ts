@@ -11,6 +11,8 @@ import { extname, join, resolve, sep } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { MAX_CLIENT_MESSAGE, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, Room, cleanNick, encode, parseClient } from "@ape/game";
 import type { ServerMsg } from "@ape/game";
+import { eventProps } from "./telemetry.ts";
+import type { PropValue, TrackedEvent } from "./telemetry.ts";
 
 export interface ServerOptions {
   readonly port: number;
@@ -25,6 +27,18 @@ export interface ServerOptions {
   /** How long an empty room is kept, in ms. */
   readonly emptyRoomMs?: number;
   readonly log?: (line: string) => void;
+  /** Playtest events; nothing is recorded when absent. */
+  readonly track?: (e: TrackedEvent) => void;
+  /** Error reporting (Sentry) for anything caught on the server. */
+  readonly onError?: (e: unknown) => void;
+  /** Public settings the web app reads at start from /config.json (e.g. its Sentry DSN). */
+  readonly clientConfig?: Readonly<Record<string, string | null>>;
+}
+
+interface SeatTags {
+  readonly anon: string;
+  readonly session: string;
+  readonly source: string | null;
 }
 
 export interface RunningServer {
@@ -36,6 +50,8 @@ export interface RunningServer {
 interface Hosted {
   readonly room: Room;
   readonly sockets: Map<string, WebSocket>;
+  /** Playtest ids of each seat's current connection. */
+  readonly tags: Map<string, SeatTags>;
   timer: ReturnType<typeof setTimeout> | null;
   emptySince: number;
 }
@@ -113,7 +129,27 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   /** When each address opened its recent rooms. */
   const opened = new Map<string, number[]>();
   const staticDir = opts.staticDir != null && existsSync(opts.staticDir) ? resolve(opts.staticDir) : null;
-  const report = (where: string, e: unknown): void => log(`${where}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+  const report = (where: string, e: unknown): void => {
+    log(`${where}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    try {
+      opts.onError?.(e);
+    } catch {
+      // ignored
+    }
+  };
+  /** When each playtest session was first seen, so a reconnect is not a new session. */
+  const sessions = new Map<string, number>();
+  /** Ends the playtest session of every connection that is still open; used on shutdown. */
+  const enders = new Set<() => void>();
+
+  function emit(t: SeatTags, room: string, event: string, props: Record<string, PropValue>): void {
+    if (opts.track === undefined) return;
+    try {
+      opts.track({ ts: new Date().toISOString(), event, anon: t.anon, session: t.session, source: t.source, room, props });
+    } catch (e) {
+      report("telemetry", e);
+    }
+  }
 
   /**
    * Each tick schedules the next one at the room's current pace. A pace
@@ -141,7 +177,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   function openRoom(code: string): Hosted {
     const sockets = new Map<string, WebSocket>();
+    const tags = new Map<string, SeatTags>();
     const room = new Room(code, {
+      track: (pid, ev) => {
+        const t = tags.get(pid);
+        if (t !== undefined) emit(t, code, ev.name, eventProps(ev));
+      },
       newSeed: () => new Uint8Array(randomBytes(32)),
       newToken: () => randomBytes(16).toString("hex"),
       now: () => Date.now(),
@@ -155,7 +196,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         ws.send(text);
       },
     });
-    const h: Hosted = { room, sockets, timer: null, emptySince: Date.now() };
+    const h: Hosted = { room, sockets, tags, timer: null, emptySince: Date.now() };
     hosted.set(code, h);
     rooms.set(code, room);
     arm(h);
@@ -191,12 +232,17 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       else if (now - h.emptySince > emptyRoomMs) closeRoom(h);
     }
     for (const [address, times] of opened) if (times.every((t) => now - t >= ROOM_WINDOW_MS)) opened.delete(address);
+    for (const [id, started] of sessions) if (now - started > 24 * 3600_000) sessions.delete(id);
   }, 30_000);
 
   function serveStatic(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? "/", "http://x");
     if (url.pathname === "/health") {
       res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+      return;
+    }
+    if (url.pathname === "/config.json") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" }).end(JSON.stringify(opts.clientConfig ?? {}));
       return;
     }
     if (staticDir === null || (req.method !== "GET" && req.method !== "HEAD")) {
@@ -262,6 +308,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return;
       }
       let h = hello.room === null ? undefined : hosted.get(hello.room);
+      const created = h === undefined;
       if (h === undefined) {
         // Only a hello that would be seated opens a room, and one address can only open so many.
         if (cleanNick(hello.nick) === null) {
@@ -288,10 +335,31 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         old.close(1000, "replaced");
       }
       h.sockets.set(r.pid, ws);
-      h.room.flush();
       clearTimeout(helloTimer);
       seat = { h, pid: r.pid };
+      if (hello.anon !== null && hello.session !== null) {
+        const t: SeatTags = { anon: hello.anon, session: hello.session, source: hello.source };
+        h.tags.set(r.pid, t);
+        if (!sessions.has(t.session)) {
+          sessions.set(t.session, Date.now());
+          emit(t, h.room.code, "session_start", { created, rejoined: r.rejoined });
+        }
+        playtest = { t, room: h.room.code };
+      } else h.tags.delete(r.pid);
+      h.room.flush();
     };
+
+    // The playtest session ends when the seat's connection goes away for good (or the server stops).
+    let playtest: { t: SeatTags; room: string } | null = null;
+    const endSession = (): void => {
+      enders.delete(endSession);
+      if (playtest === null) return;
+      const { t, room } = playtest;
+      playtest = null;
+      const started = sessions.get(t.session);
+      emit(t, room, "session_end", { duration_s: started === undefined ? null : Math.round((Date.now() - started) / 1000) });
+    };
+    enders.add(endSession);
 
     ws.on("message", (data, isBinary) => {
       const now = Date.now();
@@ -316,10 +384,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
     ws.on("close", () => {
       clearTimeout(helloTimer);
+      // A socket replaced by a newer one for the same seat does not end the session.
+      enders.delete(endSession);
       if (seat === null) return;
       const { h, pid } = seat;
       if (h.sockets.get(pid) === ws) {
         h.sockets.delete(pid);
+        endSession();
         try {
           h.room.leave(pid);
         } catch (e) {
@@ -341,6 +412,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         close: () =>
           new Promise<void>((closed) => {
             clearInterval(sweeper);
+            for (const end of [...enders]) end();
             for (const h of [...hosted.values()]) closeRoom(h);
             for (const c of wss.clients) c.terminate();
             wss.close();

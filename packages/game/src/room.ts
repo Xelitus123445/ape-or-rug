@@ -42,7 +42,7 @@ import {
 } from "./constants.ts";
 import type { Pace } from "./constants.ts";
 import { cleanNick, encode, nickSkeleton, packTick, parseClient } from "./protocol.ts";
-import type { ActionError, BoardRow, ClientMsg, CoinMeta, FeedItem, FeedKind, FinishedCoin, LanePhase, LaneView, MeView, RoomSettings, ServerMsg } from "./protocol.ts";
+import type { ActionError, BoardRow, ClientMsg, CoinMeta, FeedItem, FeedKind, FinishedCoin, LanePhase, LaneView, MeView, RoomSettings, ServerMsg, TutorialOutcome } from "./protocol.ts";
 
 export interface RoomDeps {
   /** 32 random bytes for a coin seed. */
@@ -55,7 +55,25 @@ export interface RoomDeps {
   readonly send: (pid: string, frame: string) => void;
   /** Called when the host changes the pace, so the caller can re-arm its timer. */
   readonly onPace?: (ticksPerSecond: number) => void;
+  /** Playtest telemetry: one call per thing a player did or had happen to them. Never feeds back into the game. */
+  readonly track?: (pid: string, event: RoomEvent) => void;
 }
+
+/** Which coin an event is about. The commit is unique per coin, even across server restarts. */
+export interface CoinTags {
+  readonly lane: number;
+  readonly profile: number;
+  readonly roundId: string;
+  readonly commit: string;
+}
+
+export type RoomEvent =
+  | ({ readonly name: "round_join" } & CoinTags)
+  | ({ readonly name: "buy"; readonly stake: bigint; readonly tick: number; readonly price: bigint } & CoinTags)
+  | ({ readonly name: "sell"; readonly kind: "sell" | "initials"; readonly bps: bigint; readonly payout: bigint; readonly tick: number; readonly price: bigint } & CoinTags)
+  | ({ readonly name: "rugged"; readonly lost: bigint; readonly tick: number } & CoinTags)
+  | ({ readonly name: "round_end"; readonly outcome: "rugged" | "settled"; readonly staked: bigint; readonly paid: bigint; readonly ticks: number } & CoinTags)
+  | { readonly name: "tutorial_step"; readonly step: number; readonly outcome: TutorialOutcome };
 
 export interface RoomLane {
   readonly index: number;
@@ -194,6 +212,19 @@ export class Room {
     const queues = this.#queues;
     this.#queues = new Map();
     for (const [pid, msgs] of queues) if (msgs.length > 0) this.#deps.send(pid, encode(msgs));
+  }
+
+  private tags(lane: RoomLane): CoinTags {
+    return { lane: lane.index, profile: lane.profile, roundId: lane.roundId, commit: lane.commit };
+  }
+
+  /** Telemetry must never break the game: a failing tracker is ignored. */
+  private track(pid: string, event: RoomEvent): void {
+    try {
+      this.#deps.track?.(pid, event);
+    } catch {
+      // ignored
+    }
   }
 
   /** A feed line for everyone in the room. `lane` is null for joins and leaves. */
@@ -369,7 +400,10 @@ export class Room {
         this.#dirtyMe.add(p.id);
         if (o.reason === "rug") {
           // One line per player and coin: the value that just went to zero.
-          if (!rugShown) this.push("lost", lane, { amount: bagBefore.get(p.id) ?? 0n, price: before, pid: p.id });
+          if (!rugShown) {
+            this.push("lost", lane, { amount: bagBefore.get(p.id) ?? 0n, price: before, pid: p.id });
+            this.track(p.id, { name: "rugged", ...this.tags(lane), lost: bagBefore.get(p.id) ?? 0n, tick: c.tick });
+          }
           rugShown = true;
         } else {
           const h = this.holding(p.id, lane.index);
@@ -386,6 +420,8 @@ export class Room {
       const h = this.holding(p.id, lane.index);
       if (h.stake > 0n) results.set(p.id, { staked: h.stake, paid: h.paid });
     }
+    const outcome = lane.state.status === STATUS_RUGGED ? "rugged" : "settled";
+    for (const [pid, r] of results) this.track(pid, { name: "round_end", ...this.tags(lane), outcome, staked: r.staked, paid: r.paid, ticks: lane.state.tick });
     const coin: FinishedCoin = {
       id: ++this.#finishedId,
       lane: lane.index,
@@ -527,6 +563,11 @@ export class Room {
       this.flush();
       return;
     }
+    // Telemetry from the client changes nothing in the room and gets no answer.
+    if (msg.t === "track") {
+      this.track(pid, { name: "tutorial_step", step: msg.step, outcome: msg.outcome });
+      return;
+    }
     // Every action carries a number larger than the last one: a replayed or
     // duplicated message is refused before it can do anything.
     if (msg.seq <= p.lastSeq) {
@@ -540,7 +581,7 @@ export class Room {
     this.flush();
   }
 
-  private act(p: Player, msg: Exclude<ClientMsg, { t: "hello" }>): ActionError | null {
+  private act(p: Player, msg: Exclude<ClientMsg, { t: "hello" } | { t: "track" }>): ActionError | null {
     switch (msg.t) {
       case "buy":
       case "sell":
@@ -597,6 +638,9 @@ export class Room {
     if (!r.ok) return r.error;
     this.#dirtyMe.add(p.id);
     this.push("buy", lane, { amount: stake, pid: p.id });
+    // The first buy on a coin is when the player joins that round.
+    if (this.holding(p.id, lane.index).stake === stake) this.track(p.id, { name: "round_join", ...this.tags(lane) });
+    this.track(p.id, { name: "buy", ...this.tags(lane), stake, tick: c.tick, price: c.price });
     return null;
   }
 
@@ -617,6 +661,7 @@ export class Room {
     this.#dirtyMe.add(p.id);
     const h = this.holding(p.id, lane.index);
     this.push("sell", lane, { amount: total, won: h.paid + h.value >= h.stake, pid: p.id });
+    this.track(p.id, { name: "sell", ...this.tags(lane), kind: "sell", bps, payout: total, tick: c.tick, price: c.price });
     return null;
   }
 
@@ -637,6 +682,7 @@ export class Room {
     // Initials gets the stake of one position back; with several buys the coin can still be in the red.
     const h = this.holding(p.id, lane.index);
     this.push("initials", lane, { amount: total, won: h.paid + h.value >= h.stake, pid: p.id });
+    this.track(p.id, { name: "sell", ...this.tags(lane), kind: "initials", bps: 0n, payout: total, tick: c.tick, price: c.price });
     return null;
   }
 }

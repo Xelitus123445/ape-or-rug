@@ -8,7 +8,7 @@ import type { Engine, Position, TickRecord } from "@ape/engine";
 import { PACES, WAIT_UNITS } from "./constants.ts";
 import type { Pace } from "./constants.ts";
 import { decodeServer, encode, unpackTick } from "./protocol.ts";
-import type { ActionError, BoardRow, CoinMeta, FeedItem, FinishedCoin, LanePhase, LaneView, MeView, RoomSettings, ServerMsg } from "./protocol.ts";
+import type { ActionError, BoardRow, CoinMeta, FeedItem, FinishedCoin, LanePhase, LaneView, MeView, RoomSettings, ServerMsg, TutorialOutcome } from "./protocol.ts";
 import { verifyCoin } from "./verify.ts";
 import type { Verification } from "./verify.ts";
 
@@ -218,6 +218,11 @@ export class RoomMirror {
 
   refill(): number {
     return this.order({ t: "refill" });
+  }
+
+  /** Tells the server's playtest log how far the guided tips got. Not an action: no number, no answer. */
+  trackTutorial(step: number, outcome: TutorialOutcome): void {
+    if (this.status === "open") this.#send(encode({ t: "track", e: "tutorial", step, outcome }));
   }
 
   // --------------------------------------------------------------- inbound

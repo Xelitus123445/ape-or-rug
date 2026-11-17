@@ -10,6 +10,7 @@
   "dependencies": {
     "@ape/engine": "workspace:*",
     "@ape/game": "workspace:*",
+    "@sentry/node": "^11.12.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

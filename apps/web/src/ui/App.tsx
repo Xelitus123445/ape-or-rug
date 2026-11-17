@@ -7,6 +7,7 @@ import type { CoinMeta, FeedItem, FinishedCoin, LiveCoin, MirrorLane, RoomMirror
 import { chip, clock, mult, signedUsdk, usdk } from "../game/format.ts";
 import { Connection, browserDial, readKey, writeKey } from "../net/connection.ts";
 import type { Dial } from "../net/connection.ts";
+import { playtestTags } from "../net/playtest.ts";
 import { S } from "../strings.ts";
 import { Chart } from "./Chart.tsx";
 import { play } from "./sound.ts";
@@ -358,6 +359,7 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
         play(net >= 0n ? "win" : "loss", muted);
         added.push({ id: f.id, text: S.popSold(usdk(f.amount ?? 0n), signedUsdk(net)), tone: net >= 0n ? "gold" : "down" });
         if ((f.kind === "sell" || f.kind === "initials") && tipStep >= 0) {
+          m.trackTutorial(tipStep, "done");
           setTipStep(-1);
           store("aor.tips");
         }
@@ -385,6 +387,14 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
       setTimeout(() => setPops((p) => p.filter((x) => !ids.has(x.id))), 1800);
     }
   }, [newest, m, me, muted, focus, tipStep]);
+
+  // Each tip the player sees is logged once, for the guided-round share in the playtest report.
+  const tipShown = useRef(-1);
+  useEffect(() => {
+    if (!m.ready || tipStep < 0 || tipShown.current >= tipStep) return;
+    tipShown.current = tipStep;
+    m.trackTutorial(tipStep, "shown");
+  }, [m, m.ready, tipStep]);
 
   if (!m.ready) {
     return (
@@ -420,6 +430,7 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
   // Tips follow what the player does: after the first buy "Watch", once a bag is in profit "Cash out".
   if (tipStep === 1 && hasOpen && alive && result > 0n) setTipStep(2);
   const endTips = (): void => {
+    if (tipStep >= 0) m.trackTutorial(tipStep, "skipped");
     setTipStep(-1);
     store("aor.tips");
   };
@@ -432,7 +443,9 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
     setMuted(!muted);
   };
   const invite = (): void => {
-    const url = `${location.origin}${location.pathname}?room=${m.code}`;
+    // Friends invited by a tester count in the tester's group.
+    const src = conn.tags?.source;
+    const url = `${location.origin}${location.pathname}?room=${m.code}${src != null ? `&src=${src}` : ""}`;
     void navigator.clipboard?.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
@@ -770,10 +783,12 @@ export function App({ dial }: { dial?: Dial }) {
   const [entered, setEntered] = useState(() => code !== null && nick !== null);
   const [conn, setConn] = useState<Connection | null>(null);
   const useDial = useMemo(() => dial ?? browserDial(), [dial]);
+  // Read once, before the address bar is rewritten to ?room=...
+  const [tags] = useState(() => playtestTags(location.search));
 
   useEffect(() => {
     if (!entered || nick === null) return;
-    const c = new Connection(useDial, code, nick);
+    const c = new Connection(useDial, code, nick, tags);
     c.onRoom = (room) => {
       if (roomFromUrl() !== room) history.replaceState(null, "", `?room=${room}`);
     };

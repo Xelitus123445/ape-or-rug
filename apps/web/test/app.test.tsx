@@ -109,6 +109,14 @@ describe("app smoke test", () => {
     }
     expect(verified).toBe(3);
     expect(host.querySelectorAll(".history li").length).toBeGreaterThan(3);
+    // The tips the player saw went to the playtest log, each once.
+    const tips = loop.events.filter((e) => e.name === "tutorial_step");
+    expect(tips.slice(0, 2)).toEqual([
+      { name: "tutorial_step", step: 0, outcome: "shown" },
+      { name: "tutorial_step", step: 1, outcome: "shown" },
+    ]);
+    expect(new Set(tips.map((t) => JSON.stringify(t))).size).toBe(tips.length);
+    expect(loop.events.some((e) => e.name === "round_join")).toBe(true);
     expect(host.querySelectorAll(".card").length).toBe(3);
     await act(async () => root.unmount());
   });
@@ -116,13 +124,20 @@ describe("app smoke test", () => {
   it("goes straight into the room from an invite link with a saved nickname, and shows a full room", async () => {
     const loop = loopback(4);
     localStorage.setItem("aor.nick", "Bo");
-    history.replaceState(null, "", "/?room=abcdef");
+    history.replaceState(null, "", "/?room=abcdef&src=Crypto");
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
     await act(async () => root.render(<App dial={loop.dial} />));
     await settle(50);
     expect(loop.room()!.code).toBe("abcdef");
+    // Anonymous playtest tags: random ids and the link's group, kept for later visits.
+    const hello = loop.hellos[0]!;
+    expect(hello.anon).toMatch(/^[0-9a-f]{32}$/);
+    expect(hello.session).toMatch(/^[0-9a-f]{32}$/);
+    expect(hello.source).toBe("crypto");
+    expect(localStorage.getItem("aor.src")).toBe("crypto");
+    expect(localStorage.getItem("aor.anon")).toBe(hello.anon);
     expect(host.querySelectorAll(".card").length).toBe(3);
     // Fill the room from outside, then a new tab gets the full-room message.
     for (const nick of ["Cy", "Dee", "Eli", "Fay"]) expect(loop.room()!.join(nick, null).ok).toBe(true);

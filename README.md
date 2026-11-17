@@ -32,6 +32,15 @@ Requires Node 24 or newer and pnpm.
 | `pnpm test:stream` | Uniformity test of the random stream on 10^8 draws (a few minutes) |
 | `pnpm test:browser` | Recompute the golden rounds in headless Edge/Chrome and compare with Node. Add `-- --manual` to open the printed address in any browser instead |
 | `pnpm gen:tables` | Regenerate growth tables after a config change |
+| `pnpm report [file] [--tz 3] [--keep-dev] [--json]` | Playtest report from `data/events.jsonl`: rounds per first session, next-day return, guided round, split by the invite link's `src` tag. Players who came with `src=dev` are left out |
+| `pnpm smoke [url]` | Check a running build end to end (pages, settings, one test player with `src=dev`) |
+
+## Playtest and deploy
+
+- Invite links carry a group tag: `https://<host>/?src=crypto` or `?src=general`. A player keeps the tag of their first visit, and links they share from a room carry it on. Use `?src=dev` for your own play so the report leaves it out.
+- Recorded per player: a random id kept in the browser, a random id per tab visit, the tag, and game events (`session_start`, `round_join`, `buy`, `sell`, `rugged`, `round_end`, `tutorial_step`, `session_end`). No nicknames, no addresses.
+- Events are written to the JSONL file and, with `POSTHOG_KEY`, sent to PostHog. Errors go to Sentry with `SENTRY_DSN`. See `.env.example`.
+- Railway: one service built from `Dockerfile` (`railway.json` sets one replica and the `/health` check). Add a volume at `/data` for the events file, generate a public domain, then run `pnpm smoke https://<domain>`.
 
 ## Changing the math
 

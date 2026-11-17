@@ -172,6 +172,24 @@ Acceptance:
 - Report runs on recorded data and matches a hand count on a small sample
 - Invite links with different `source` tags are separated in the report
 
+Status (built, not yet deployed):
+
+- Events are recorded by the server, not the browser: the client sends a
+  random id (local storage), a random id per tab visit (session storage)
+  and the link's `src` tag with hello, and only tutorial steps on its own.
+  Game events come from the room, so they cannot be faked or blocked.
+- A round = a coin the player bought into, keyed by the coin's commit.
+  Definitions of every report number are at the top of
+  `apps/server/src/report.ts`.
+- The JSONL file is the record the report reads; PostHog gets a copy.
+- `src=dev` marks the developers' own play; the report leaves it out.
+- Acceptance tests: `apps/server/test/report.test.ts` (hand-counted sample,
+  groups kept apart), `apps/server/test/telemetry.test.ts`,
+  `packages/game/test/telemetry.test.ts`.
+- Left for the deploy (needs the owner's accounts): GitHub repo, Railway
+  service with a `/data` volume, PostHog key, Sentry DSN, the proxy check
+  from M3, and `pnpm smoke` against the public address.
+
 ## Decision point after M4
 
 Run the playtest with two groups (crypto audience, general players).

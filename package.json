@@ -12,7 +12,9 @@
     "test:stream": "node packages/engine/tools/stream-uniformity.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen:tables": "node packages/engine/tools/gen-tables.ts",
-    "sim": "node packages/sim/src/cli.ts"
+    "sim": "node packages/sim/src/cli.ts",
+    "report": "node apps/server/src/report-cli.ts",
+    "smoke": "node apps/server/src/smoke.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

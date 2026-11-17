@@ -3,6 +3,7 @@
 // gets the same seat and bags back.
 
 import { RoomMirror, encode } from "@ape/game";
+import type { HelloTags } from "@ape/game";
 
 export interface Socket {
   send(text: string): void;
@@ -80,10 +81,13 @@ export class Connection {
   /** Called once the room code is known, so the page can show it in the address bar. */
   onRoom: ((code: string) => void) | null = null;
 
-  constructor(dial: Dial, code: string | null, nick: string) {
+  readonly tags: HelloTags | null;
+
+  constructor(dial: Dial, code: string | null, nick: string, tags: HelloTags | null = null) {
     this.#dial = dial;
     this.#code = code;
     this.#nick = nick;
+    this.tags = tags;
     this.mirror = new RoomMirror((text) => this.#socket?.send(text));
   }
 
@@ -118,7 +122,7 @@ export class Connection {
       open: () => {
         if (gen !== this.#gen) return;
         const token = this.#code === null ? null : readSeat(this.#code);
-        socket.send(encode({ t: "hello", room: this.#code, nick: this.#nick, token }));
+        socket.send(encode({ t: "hello", room: this.#code, nick: this.#nick, token, ...(this.tags ?? {}) }));
       },
       message: (text) => {
         if (gen !== this.#gen) return;

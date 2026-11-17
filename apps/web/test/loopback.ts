@@ -2,11 +2,14 @@
 // room runs on the page's timers (fake timers in tests) at its own pace, and
 // every message crosses an async boundary, as it would over a socket.
 import { Room } from "@ape/game";
+import type { RoomEvent } from "@ape/game";
 import { sha256, toHex } from "@ape/engine";
 import type { Dial } from "../src/net/connection.ts";
 
-export function loopback(tag = 1): { dial: Dial; room: () => Room | null } {
+export function loopback(tag = 1): { dial: Dial; room: () => Room | null; hellos: Record<string, unknown>[]; events: RoomEvent[] } {
   let room: Room | null = null;
+  const hellos: Record<string, unknown>[] = [];
+  const events: RoomEvent[] = [];
   let n = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   const sockets = new Map<string, (text: string) => void>();
@@ -32,6 +35,7 @@ export function loopback(tag = 1): { dial: Dial; room: () => Room | null } {
             return;
           }
           const hello = JSON.parse(text) as { room: string | null; nick: string; token: string | null };
+          hellos.push(hello);
           if (room === null) {
             room = new Room(hello.room ?? "loop42", {
               newSeed: () => sha256(new Uint8Array([tag, n & 255, (n++ >>> 8) & 255, 0x11])),
@@ -39,6 +43,7 @@ export function loopback(tag = 1): { dial: Dial; room: () => Room | null } {
               now: () => Date.now(),
               send: (to, frame) => sockets.get(to)?.(frame),
               onPace: () => arm(),
+              track: (_pid, ev) => events.push(ev),
             });
             arm();
           }
@@ -62,5 +67,5 @@ export function loopback(tag = 1): { dial: Dial; room: () => Room | null } {
       },
     };
   };
-  return { dial, room: () => room };
+  return { dial, room: () => room, hellos, events };
 }

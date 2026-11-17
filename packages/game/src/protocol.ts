@@ -166,8 +166,22 @@ export type ServerMsg =
   | { readonly t: "ack"; readonly seq: number; readonly ok: boolean; readonly error?: ActionError }
   | { readonly t: "error"; readonly error: "room_full" | "bad_nick" | "bad_room" | "bad_message" | "replaced" | "rate_limited" };
 
+/** Anonymous playtest tags a client sends with hello. No personal data: random ids and a link tag. */
+export interface HelloTags {
+  /** Random id kept in the browser's local storage. */
+  readonly anon: string | null;
+  /** Random id for one visit in one tab. */
+  readonly session: string | null;
+  /** The `src` tag of the invite link the player first came from. */
+  readonly source: string | null;
+}
+
+export const TUTORIAL_OUTCOMES = ["shown", "done", "skipped"] as const;
+export type TutorialOutcome = (typeof TUTORIAL_OUTCOMES)[number];
+
 export type ClientMsg =
-  | { readonly t: "hello"; readonly room: string | null; readonly nick: string; readonly token: string | null }
+  | ({ readonly t: "hello"; readonly room: string | null; readonly nick: string; readonly token: string | null } & HelloTags)
+  | { readonly t: "track"; readonly e: "tutorial"; readonly step: number; readonly outcome: TutorialOutcome }
   | { readonly t: "buy"; readonly seq: number; readonly lane: number; readonly roundId: string; readonly stake: bigint }
   | { readonly t: "sell"; readonly seq: number; readonly lane: number; readonly roundId: string; readonly bps: bigint }
   | { readonly t: "initials"; readonly seq: number; readonly lane: number; readonly roundId: string }
@@ -244,6 +258,14 @@ function isRoundId(v: unknown): v is string {
   return typeof v === "string" && v.length <= 24 && /^[a-z]+-[0-9]+$/.test(v);
 }
 
+/** A 32-hex-digit id, null, or undefined when it is neither. */
+function hexOrNull(v: unknown): string | null | undefined {
+  return v === null ? null : typeof v === "string" && /^[0-9a-f]{32}$/.test(v) ? v : undefined;
+}
+
+/** Invite-link tag: short, lowercase, safe to put in a report. */
+export const SOURCE_RE = /^[a-z0-9_-]{1,24}$/;
+
 function amount(v: unknown, max: number): bigint | null {
   // Amounts come as {"$b": "<digits>"}; plain numbers are refused so nothing is ever rounded.
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
@@ -268,11 +290,23 @@ export function parseClient(text: string): ClientMsg | null {
   const keys = Object.keys(o).sort().join(",");
   switch (o.t) {
     case "hello": {
-      if (keys !== "nick,room,t,token") return null;
+      // The playtest tags are optional as a group: all three or none.
+      const tagged = keys === "anon,nick,room,session,source,t,token";
+      if (keys !== "nick,room,t,token" && !tagged) return null;
       const room = o.room === null ? null : typeof o.room === "string" && /^[a-z0-9]{6}$/.test(o.room) ? o.room : undefined;
-      const token = o.token === null ? null : typeof o.token === "string" && /^[0-9a-f]{32}$/.test(o.token) ? o.token : undefined;
+      const token = hexOrNull(o.token);
       if (room === undefined || token === undefined || typeof o.nick !== "string") return null;
-      return { t: "hello", room, nick: o.nick, token };
+      const anon = tagged ? hexOrNull(o.anon) : null;
+      const session = tagged ? hexOrNull(o.session) : null;
+      const source = !tagged || o.source === null ? null : typeof o.source === "string" && SOURCE_RE.test(o.source) ? o.source : undefined;
+      if (anon === undefined || session === undefined || source === undefined) return null;
+      return { t: "hello", room, nick: o.nick, token, anon, session, source };
+    }
+    case "track": {
+      if (keys !== "e,outcome,step,t" || o.e !== "tutorial") return null;
+      if (typeof o.step !== "number" || !Number.isInteger(o.step) || o.step < 0 || o.step > 9) return null;
+      const outcome = TUTORIAL_OUTCOMES.find((x) => x === o.outcome);
+      return outcome === undefined ? null : { t: "track", e: "tutorial", step: o.step, outcome };
     }
     case "buy": {
       if (keys !== "lane,roundId,seq,stake,t" || !isSeq(o.seq) || !isLane(o.lane) || !isRoundId(o.roundId)) return null;

@@ -2,7 +2,7 @@
 // message is encoded and decoded exactly as it would be over a socket.
 import { sha256, toHex } from "@ape/engine";
 import { Room, RoomMirror, decodeServer } from "../src/index.ts";
-import type { ServerMsg } from "../src/index.ts";
+import type { RoomDeps, ServerMsg } from "../src/index.ts";
 
 export interface Frame {
   readonly pid: string;
@@ -41,7 +41,7 @@ export function seedSource(tag: number): { next: () => Uint8Array; all: Uint8Arr
   };
 }
 
-export function harness(tag: number, newSeed?: () => Uint8Array): Harness {
+export function harness(tag: number, newSeed?: () => Uint8Array, track?: RoomDeps["track"]): Harness {
   const seeds = seedSource(tag);
   let tokens = 0;
   const frames: Frame[] = [];
@@ -83,6 +83,7 @@ export function harness(tag: number, newSeed?: () => Uint8Array): Harness {
     newSeed: newSeed ?? seeds.next,
     newToken: () => toHex(sha256(new Uint8Array([tag & 255, tokens++ & 255, 0x7d]))).slice(0, 32),
     now: () => h.now,
+    ...(track !== undefined ? { track } : {}),
     send: (pid, text) => {
       const played = new Map<string, number>();
       for (const l of h.room.lanes) played.set(l.roundId, l.state.tick);
