@@ -47,7 +47,8 @@ const server = await startServer({
   log,
   track: telemetry.enabled ? telemetry.emit : undefined,
   onError,
-  clientConfig: { sentryDsn: env("SENTRY_DSN_WEB") ?? sentryDsn, sentryEnv: env("SENTRY_ENV") ?? "playtest" },
+  // Only a DSN meant for the browser is published; the server's own stays private.
+  clientConfig: { sentryDsn: env("SENTRY_DSN_WEB"), sentryEnv: env("SENTRY_ENV") ?? "playtest" },
 });
 
 let stopping = false;

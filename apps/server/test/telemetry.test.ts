@@ -86,6 +86,27 @@ describe("telemetry", () => {
     expect(typeof events.at(-1)!.props.duration_s).toBe("number");
   });
 
+  it("records only so many new anonymous ids from one address, and ends a session when another tab takes the seat", async () => {
+    const events: TrackedEvent[] = [];
+    server = await startServer({ port: 0, staticDir: null, tickMs: () => 1000, log: () => {}, anonsPerAddress: 2, track: (e) => events.push(e) });
+    const hex = (n: number): string => n.toString(16).padStart(32, "0");
+    const a = await connect(server.port, null, "Ana", { anon: hex(1), session: hex(1), source: null });
+    const code = a.mirror.code;
+    await connect(server.port, code, "Bo", { anon: hex(2), session: hex(2), source: null });
+    const third = await connect(server.port, code, "Cy", { anon: hex(3), session: hex(3), source: null });
+    expect(third.mirror.fatal).toBeNull(); // plays normally
+    expect(new Set(events.map((e) => e.anon))).toEqual(new Set([hex(1), hex(2)]));
+
+    // Ana's seat is taken over by a tab with another session id: Ana's session ends, a new one starts
+    // under the same anonymous id whatever the new tab claims.
+    const other = await connect(server.port, code, "Ana", { anon: hex(9), session: hex(8), source: "crypto" }, a.mirror.you!.token);
+    await a.closed;
+    expect(other.mirror.you!.id).toBe(a.mirror.you!.id);
+    const ana = events.filter((e) => e.anon === hex(1)).map((e) => `${e.event}:${e.session}:${e.source}`);
+    expect(ana).toEqual([`session_start:${hex(1)}:null`, `session_end:${hex(1)}:null`, `session_start:${hex(8)}:null`]);
+    expect(events.some((e) => e.anon === hex(9))).toBe(false);
+  });
+
   it("serves the public client settings", async () => {
     server = await startServer({ port: 0, staticDir: null, log: () => {}, clientConfig: { sentryDsn: null } });
     const res = await fetch(`http://127.0.0.1:${server.port}/config.json`);
@@ -127,6 +148,6 @@ describe("telemetry", () => {
     expect(posts.map((p) => p.body.batch.length)).toEqual([2, 1]);
     expect(posts[0]!.url).toBe("https://ph.example/batch/");
     expect(posts[0]!.body.api_key).toBe("phc_test");
-    expect(posts[0]!.body.batch[0]).toMatchObject({ event: "buy", distinct_id: ANON, properties: { stake: 1, source: "general", $session_id: SESSION } });
+    expect(posts[0]!.body.batch[0]).toMatchObject({ event: "buy", distinct_id: ANON, properties: { stake: 1, source: "general", session_id: SESSION } });
   });
 });

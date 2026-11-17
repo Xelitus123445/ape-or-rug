@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/ui/App.tsx";
 import { S } from "../src/strings.ts";
 import { loopback } from "./loopback.ts";
+import { inviteSource, playtestTags } from "../src/net/playtest.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -138,6 +139,12 @@ describe("app smoke test", () => {
     expect(hello.source).toBe("crypto");
     expect(localStorage.getItem("aor.src")).toBe("crypto");
     expect(localStorage.getItem("aor.anon")).toBe(hello.anon);
+    // A later dev link marks this browser as the developer's; a group link does not move a player.
+    expect(playtestTags("?src=general").source).toBe("crypto");
+    expect(playtestTags("?src=dev").source).toBe("dev");
+    expect(playtestTags("?src=crypto").source).toBe("dev");
+    expect(inviteSource("dev")).toBeNull();
+    expect(inviteSource("crypto")).toBe("crypto");
     expect(host.querySelectorAll(".card").length).toBe(3);
     // Fill the room from outside, then a new tab gets the full-room message.
     for (const nick of ["Cy", "Dee", "Eli", "Fay"]) expect(loop.room()!.join(nick, null).ok).toBe(true);

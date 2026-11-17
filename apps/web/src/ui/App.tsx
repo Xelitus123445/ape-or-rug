@@ -7,7 +7,7 @@ import type { CoinMeta, FeedItem, FinishedCoin, LiveCoin, MirrorLane, RoomMirror
 import { chip, clock, mult, signedUsdk, usdk } from "../game/format.ts";
 import { Connection, browserDial, readKey, writeKey } from "../net/connection.ts";
 import type { Dial } from "../net/connection.ts";
-import { playtestTags } from "../net/playtest.ts";
+import { inviteSource, playtestTags } from "../net/playtest.ts";
 import { S } from "../strings.ts";
 import { Chart } from "./Chart.tsx";
 import { play } from "./sound.ts";
@@ -444,7 +444,7 @@ function Game({ conn, onNewRoom }: { conn: Connection; onNewRoom: () => void }) 
   };
   const invite = (): void => {
     // Friends invited by a tester count in the tester's group.
-    const src = conn.tags?.source;
+    const src = inviteSource(conn.tags?.source ?? null);
     const url = `${location.origin}${location.pathname}?room=${m.code}${src != null ? `&src=${src}` : ""}`;
     void navigator.clipboard?.writeText(url).then(() => {
       setCopied(true);

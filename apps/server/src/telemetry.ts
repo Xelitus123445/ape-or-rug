@@ -129,7 +129,7 @@ export class PostHogSink implements Sink {
           event: e.event,
           distinct_id: e.anon,
           timestamp: e.ts,
-          properties: { ...e.props, source: e.source, room: e.room, $session_id: e.session, $geoip_disable: true, $lib: "ape-or-rug-server" },
+          properties: { ...e.props, source: e.source, room: e.room, session_id: e.session, $geoip_disable: true, $lib: "ape-or-rug-server" },
         })),
       };
       try {

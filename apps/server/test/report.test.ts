@@ -60,7 +60,7 @@ describe("playtest report", () => {
     // Shuffled order must not matter.
     const r = buildReport([...SAMPLE].reverse());
     expect(r.excludedPlayers).toBe(1); // D
-    const all = r.groups.find((g) => g.group === "all")!;
+    const all = r.groups.find((g) => g.group === "ALL")!;
     expect(all.players).toBe(4); // A B C E
     expect([all.tutorialStarted, all.tutorialFinished, all.tutorialSkipped]).toEqual([2, 1, 1]); // A and B saw it; A finished; B skipped
     // First-session rounds: A 2, B 0, C 10, E 1 -> sorted 0 1 2 10.
@@ -82,7 +82,7 @@ describe("playtest report", () => {
 
   it("keeps invite-link groups apart", () => {
     const r = buildReport(SAMPLE);
-    expect(r.groups.map((g) => g.group)).toEqual(["all", "crypto", "general", "none"]);
+    expect(r.groups.map((g) => g.group)).toEqual(["ALL", "(none)", "crypto", "general"]);
     const crypto = r.groups.find((g) => g.group === "crypto")!;
     const general = r.groups.find((g) => g.group === "general")!;
     expect(crypto.players).toBe(2);

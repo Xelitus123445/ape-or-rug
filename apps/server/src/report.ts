@@ -3,14 +3,18 @@
 // them:
 //
 // - A player is one anonymous id. Repeat visits are the same player.
-// - A player's first session is the session id of their earliest event.
+// - A player's first session: the events with the session id of their
+//   earliest event, up to the first gap of 30 minutes or more between two
+//   of them (a tab left open overnight is not one long session).
 // - A round is one coin the player bought into (round_join), counted once
 //   per coin (by its commit) within the session.
 // - Guided round: started = saw tip 0; finished = closed the tips by selling.
 // - Next-day return: any event on the calendar day after the first one.
 //   Within 3 days: any event on days 1-3 after. Only players whose window
 //   has fully passed before the last recorded event are counted.
-// - Group = the player's source tag on their first event ("none" if absent).
+// - Session length: from its first to its last event.
+// - Group = the player's source tag on their first event, "(none)" if absent.
+//   "ALL" is everyone. Tags are lowercase, so neither name can be a tag.
 
 import type { TrackedEvent } from "./telemetry.ts";
 
@@ -81,6 +85,9 @@ export function quartiles(values: readonly number[]): Quartiles {
 }
 
 const DAY = 86_400_000;
+const SESSION_GAP = 30 * 60_000;
+export const ALL = "ALL";
+export const NO_TAG = "(none)";
 
 interface Player {
   readonly anon: string;
@@ -116,7 +123,7 @@ export function buildReport(all: readonly TrackedEvent[], opts: ReportOptions = 
   for (const e of sorted) {
     let p = players.get(e.anon);
     if (p === undefined) {
-      p = { anon: e.anon, events: [], group: e.source ?? "none" };
+      p = { anon: e.anon, events: [], group: e.source ?? NO_TAG };
       players.set(e.anon, p);
     }
     p.events.push(e);
@@ -132,7 +139,8 @@ export function buildReport(all: readonly TrackedEvent[], opts: ReportOptions = 
   const lastDay = lastTs === null ? 0 : day(lastTs);
 
   const groupNames = [...new Set([...players.values()].map((p) => p.group))].sort();
-  const groups = ["all", ...groupNames].map((g) => groupReport(g, [...players.values()].filter((p) => g === "all" || p.group === g), day, lastDay));
+  const everyone = [...players.values()];
+  const groups = [groupReport(ALL, everyone, day, lastDay), ...groupNames.map((g) => groupReport(g, everyone.filter((p) => p.group === g), day, lastDay))];
   return { events: sorted.length, excludedPlayers: excluded, from: sorted[0]?.ts ?? null, to: lastTs, groups };
 }
 
@@ -156,7 +164,12 @@ function groupReport(group: string, players: readonly Player[], day: (ts: string
 
     // First session: rounds, length and how its last round ended.
     const first = ev[0]!.session;
-    const inFirst = ev.filter((e) => e.session === first);
+    const inFirst: TrackedEvent[] = [];
+    for (const e of ev) {
+      if (e.session !== first) continue;
+      if (inFirst.length > 0 && Date.parse(e.ts) - Date.parse(inFirst[inFirst.length - 1]!.ts) >= SESSION_GAP) break;
+      inFirst.push(e);
+    }
     const joined: string[] = [];
     for (const e of inFirst) {
       const c = String(e.props.commit);
@@ -165,9 +178,8 @@ function groupReport(group: string, players: readonly Player[], day: (ts: string
     rounds.push(joined.length);
     roundBuckets[bucket(joined.length)]!++;
     if (joined.length >= 10) tenPlus++;
-    const start = Date.parse(inFirst[0]!.ts);
-    const end = Math.max(...inFirst.map((e) => (e.event === "session_end" && typeof e.props.duration_s === "number" ? start + e.props.duration_s * 1000 : Date.parse(e.ts))));
-    minutes.push((end - start) / 60_000);
+    // Events are in time order, so the last one ends the session (no spread over a huge list).
+    minutes.push((Date.parse(inFirst[inFirst.length - 1]!.ts) - Date.parse(inFirst[0]!.ts)) / 60_000);
     const lastCoin = joined[joined.length - 1];
     if (lastCoin !== undefined) {
       const endEv = inFirst.find((e) => e.event === "round_end" && e.props.commit === lastCoin);
@@ -192,9 +204,13 @@ function groupReport(group: string, players: readonly Player[], day: (ts: string
     // All sessions: which coin kinds and how long the bag was held.
     const firstBuy = new Map<string, number>();
     const closed = new Set<string>();
+    const counted = new Set<string>();
     for (const e of ev) {
       const c = String(e.props.commit);
-      if (e.event === "round_join" && typeof e.props.profile === "number") profileRounds[e.props.profile] = (profileRounds[e.props.profile] ?? 0) + 1;
+      if (e.event === "round_join" && typeof e.props.profile === "number" && e.props.profile >= 0 && e.props.profile <= 2 && !counted.has(c)) {
+        counted.add(c);
+        profileRounds[e.props.profile]!++;
+      }
       if (e.event === "buy" && !firstBuy.has(c) && typeof e.props.tick === "number") firstBuy.set(c, e.props.tick);
       if ((e.event === "sell" || e.event === "rugged") && firstBuy.has(c) && !closed.has(c) && typeof e.props.tick === "number") {
         closed.add(c);

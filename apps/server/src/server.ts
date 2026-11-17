@@ -27,6 +27,8 @@ export interface ServerOptions {
   /** How long an empty room is kept, in ms. */
   readonly emptyRoomMs?: number;
   readonly log?: (line: string) => void;
+  /** New anonymous ids one address may bring per hour before it is no longer recorded. */
+  readonly anonsPerAddress?: number;
   /** Playtest events; nothing is recorded when absent. */
   readonly track?: (e: TrackedEvent) => void;
   /** Error reporting (Sentry) for anything caught on the server. */
@@ -37,9 +39,27 @@ export interface ServerOptions {
 
 interface SeatTags {
   readonly anon: string;
+  /** The session as recorded: the tab's id, with ".2", ".3"... after each long break. */
   readonly session: string;
   readonly source: string | null;
 }
+
+/** A seat's playtest identity. It belongs to the seat, so reconnecting cannot make one player look like many. */
+interface SeatPlay {
+  tags: SeatTags;
+  /** The id the tab sent. */
+  client: string;
+  /** Sessions this seat has had for that tab id. */
+  n: number;
+  startedAt: number;
+  /** When the seat's connection went away, or null while connected. */
+  endedAt: number | null;
+}
+
+/** A drop shorter than this is the same session; a longer one starts a new session. */
+const SESSION_GAP_MS = 30 * 60_000;
+/** New anonymous ids one address may bring per hour; more are played but not recorded. */
+const ANONS_PER_ADDRESS = 20;
 
 export interface RunningServer {
   readonly port: number;
@@ -50,8 +70,8 @@ export interface RunningServer {
 interface Hosted {
   readonly room: Room;
   readonly sockets: Map<string, WebSocket>;
-  /** Playtest ids of each seat's current connection. */
-  readonly tags: Map<string, SeatTags>;
+  /** Playtest identity of each seat. */
+  readonly play: Map<string, SeatPlay>;
   timer: ReturnType<typeof setTimeout> | null;
   emptySince: number;
 }
@@ -137,10 +157,55 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       // ignored
     }
   };
-  /** When each playtest session was first seen, so a reconnect is not a new session. */
-  const sessions = new Map<string, number>();
-  /** Ends the playtest session of every connection that is still open; used on shutdown. */
-  const enders = new Set<() => void>();
+  /** Anonymous ids recently brought by each address, with when. */
+  const anonsSeen = new Map<string, Map<string, number>>();
+
+  /** Whether this address may bring this anonymous id; records it if so. */
+  function mayTrack(address: string, anon: string): boolean {
+    const now = Date.now();
+    const seen = anonsSeen.get(address) ?? new Map<string, number>();
+    anonsSeen.set(address, seen);
+    for (const [a, t] of seen) if (now - t > 3600_000) seen.delete(a);
+    if (!seen.has(anon) && seen.size >= (opts.anonsPerAddress ?? ANONS_PER_ADDRESS)) return false;
+    seen.set(anon, now);
+    return true;
+  }
+
+  /** The seat's connection is gone (or the server stops): its session ends, once. */
+  function endPlay(h: Hosted, pid: string): void {
+    const p = h.play.get(pid);
+    if (p === undefined || p.endedAt !== null) return;
+    p.endedAt = Date.now();
+    emit(p.tags, h.room.code, "session_end", { duration_s: Math.round((p.endedAt - p.startedAt) / 1000) });
+  }
+
+  /** A connection took the seat: carry on its session, or start one. */
+  function startPlay(h: Hosted, pid: string, hello: { anon: string | null; session: string | null; source: string | null }, address: string, created: boolean, rejoined: boolean): void {
+    const now = Date.now();
+    const prev = h.play.get(pid);
+    const client = hello.session ?? prev?.client ?? null;
+    if (client === null) return;
+    if (prev === undefined) {
+      if (hello.anon === null || !mayTrack(address, hello.anon)) return;
+      h.play.set(pid, { tags: { anon: hello.anon, session: client, source: hello.source }, client, n: 1, startedAt: now, endedAt: null });
+      emit(h.play.get(pid)!.tags, h.room.code, "session_start", { created, rejoined });
+      return;
+    }
+    // Same tab back after a short drop, or a new socket while the old one is still open: same session.
+    if (client === prev.client && (prev.endedAt === null || now - prev.endedAt < SESSION_GAP_MS)) {
+      prev.endedAt = null;
+      return;
+    }
+    endPlay(h, pid);
+    const n = client === prev.client ? prev.n + 1 : 1;
+    // The seat keeps its anonymous id and group whatever the new hello claims.
+    prev.tags = { anon: prev.tags.anon, session: n === 1 ? client : `${client}.${n}`, source: prev.tags.source };
+    prev.client = client;
+    prev.n = n;
+    prev.startedAt = now;
+    prev.endedAt = null;
+    emit(prev.tags, h.room.code, "session_start", { created, rejoined });
+  }
 
   function emit(t: SeatTags, room: string, event: string, props: Record<string, PropValue>): void {
     if (opts.track === undefined) return;
@@ -177,11 +242,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   function openRoom(code: string): Hosted {
     const sockets = new Map<string, WebSocket>();
-    const tags = new Map<string, SeatTags>();
+    const play = new Map<string, SeatPlay>();
     const room = new Room(code, {
       track: (pid, ev) => {
-        const t = tags.get(pid);
-        if (t !== undefined) emit(t, code, ev.name, eventProps(ev));
+        const p = play.get(pid);
+        if (p !== undefined) emit(p.tags, code, ev.name, eventProps(ev));
       },
       newSeed: () => new Uint8Array(randomBytes(32)),
       newToken: () => randomBytes(16).toString("hex"),
@@ -196,7 +261,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         ws.send(text);
       },
     });
-    const h: Hosted = { room, sockets, tags, timer: null, emptySince: Date.now() };
+    const h: Hosted = { room, sockets, play, timer: null, emptySince: Date.now() };
     hosted.set(code, h);
     rooms.set(code, room);
     arm(h);
@@ -232,7 +297,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       else if (now - h.emptySince > emptyRoomMs) closeRoom(h);
     }
     for (const [address, times] of opened) if (times.every((t) => now - t >= ROOM_WINDOW_MS)) opened.delete(address);
-    for (const [id, started] of sessions) if (now - started > 24 * 3600_000) sessions.delete(id);
+    for (const h of hosted.values()) for (const pid of [...h.play.keys()]) if (!h.room.players.has(pid)) h.play.delete(pid);
+    for (const [address, seen] of anonsSeen) {
+      for (const [a, t] of seen) if (now - t > 3600_000) seen.delete(a);
+      if (seen.size === 0) anonsSeen.delete(address);
+    }
   }, 30_000);
 
   function serveStatic(req: IncomingMessage, res: ServerResponse): void {
@@ -337,29 +406,9 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       h.sockets.set(r.pid, ws);
       clearTimeout(helloTimer);
       seat = { h, pid: r.pid };
-      if (hello.anon !== null && hello.session !== null) {
-        const t: SeatTags = { anon: hello.anon, session: hello.session, source: hello.source };
-        h.tags.set(r.pid, t);
-        if (!sessions.has(t.session)) {
-          sessions.set(t.session, Date.now());
-          emit(t, h.room.code, "session_start", { created, rejoined: r.rejoined });
-        }
-        playtest = { t, room: h.room.code };
-      } else h.tags.delete(r.pid);
+      startPlay(h, r.pid, hello, address, created, r.rejoined);
       h.room.flush();
     };
-
-    // The playtest session ends when the seat's connection goes away for good (or the server stops).
-    let playtest: { t: SeatTags; room: string } | null = null;
-    const endSession = (): void => {
-      enders.delete(endSession);
-      if (playtest === null) return;
-      const { t, room } = playtest;
-      playtest = null;
-      const started = sessions.get(t.session);
-      emit(t, room, "session_end", { duration_s: started === undefined ? null : Math.round((Date.now() - started) / 1000) });
-    };
-    enders.add(endSession);
 
     ws.on("message", (data, isBinary) => {
       const now = Date.now();
@@ -384,13 +433,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
     ws.on("close", () => {
       clearTimeout(helloTimer);
-      // A socket replaced by a newer one for the same seat does not end the session.
-      enders.delete(endSession);
       if (seat === null) return;
       const { h, pid } = seat;
+      // A socket replaced by a newer one for the same seat does not end the session.
       if (h.sockets.get(pid) === ws) {
         h.sockets.delete(pid);
-        endSession();
+        endPlay(h, pid);
         try {
           h.room.leave(pid);
         } catch (e) {
@@ -412,7 +460,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         close: () =>
           new Promise<void>((closed) => {
             clearInterval(sweeper);
-            for (const end of [...enders]) end();
+            for (const h of hosted.values()) for (const pid of h.sockets.keys()) endPlay(h, pid);
             for (const h of [...hosted.values()]) closeRoom(h);
             for (const c of wss.clients) c.terminate();
             wss.close();

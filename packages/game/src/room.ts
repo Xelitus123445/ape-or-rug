@@ -148,6 +148,8 @@ export class Room {
   #queues = new Map<string, ServerMsg[]>();
   #dirtyMe = new Set<string>();
   #lastBoard = "";
+  /** Tutorial steps already recorded per seat. */
+  #tips = new Map<string, Set<string>>();
 
   constructor(code: string, deps: RoomDeps) {
     this.code = code;
@@ -520,6 +522,7 @@ export class Room {
         this.players.delete(p.id);
         this.#dirtyMe.delete(p.id);
         this.#queues.delete(p.id);
+        this.#tips.delete(p.id);
       }
     }
   }
@@ -565,7 +568,14 @@ export class Room {
     }
     // Telemetry from the client changes nothing in the room and gets no answer.
     if (msg.t === "track") {
-      this.track(pid, { name: "tutorial_step", step: msg.step, outcome: msg.outcome });
+      // Each step and outcome is recorded once per seat, however often it is sent.
+      const seen = this.#tips.get(pid) ?? new Set<string>();
+      this.#tips.set(pid, seen);
+      const key = `${msg.step}:${msg.outcome}`;
+      if (!seen.has(key) && seen.size < 32) {
+        seen.add(key);
+        this.track(pid, { name: "tutorial_step", step: msg.step, outcome: msg.outcome });
+      }
       return;
     }
     // Every action carries a number larger than the last one: a replayed or
@@ -623,7 +633,9 @@ export class Room {
       case "refill": {
         // Only an empty wallet with nothing riding can be refilled, and it shows on the board.
         if (p.ledger.balance >= DEFAULT_CONFIG.minStake || p.ledger.positions.some((x) => x.open)) return "not_broke";
-        p.ledger = new Ledger(DEFAULT_CONFIG, START_BALANCE);
+        // A top-up, not a new ledger: closed bags on a coin that is still live keep counting for that
+        // coin's result. The play money handed out is counted by `refills` on the board.
+        p.ledger.balance = START_BALANCE;
         p.refills++;
         this.#dirtyMe.add(p.id);
         return null;
