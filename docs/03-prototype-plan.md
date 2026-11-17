@@ -186,6 +186,9 @@ Status (built, not yet deployed):
 - Acceptance tests: `apps/server/test/report.test.ts` (hand-counted sample,
   groups kept apart), `apps/server/test/telemetry.test.ts`,
   `packages/game/test/telemetry.test.ts`.
+- Bug-hunter: PASS after two rounds (commit e229bc0 and follow-up). A
+  seat keeps its anonymous id; at most 20 new ids per address per hour are
+  recorded (logged once when hit, so a proxy hiding addresses shows up).
 - Left for the deploy (needs the owner's accounts): GitHub repo, Railway
   service with a `/data` volume, PostHog key, Sentry DSN, the proxy check
   from M3, and `pnpm smoke` against the public address.

@@ -159,6 +159,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   };
   /** Anonymous ids recently brought by each address, with when. */
   const anonsSeen = new Map<string, Map<string, number>>();
+  /** Addresses that hit the cap and have been logged once. */
+  const capLogged = new Set<string>();
+  /**
+   * The last session of each tab, across seats: a tab back after a long
+   * break gets "<tab>.2" even when its old seat has been freed meanwhile.
+   */
+  const tabSessions = new Map<string, { n: number; endedAt: number | null }>();
 
   /** Whether this address may bring this anonymous id; records it if so. */
   function mayTrack(address: string, anon: string): boolean {
@@ -166,7 +173,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     const seen = anonsSeen.get(address) ?? new Map<string, number>();
     anonsSeen.set(address, seen);
     for (const [a, t] of seen) if (now - t > 3600_000) seen.delete(a);
-    if (!seen.has(anon) && seen.size >= (opts.anonsPerAddress ?? ANONS_PER_ADDRESS)) return false;
+    if (!seen.has(anon) && seen.size >= (opts.anonsPerAddress ?? ANONS_PER_ADDRESS)) {
+      // Said once per address, so a proxy that hides every player behind one address shows up in the logs.
+      if (!capLogged.has(address)) log(`telemetry: new-player cap reached for one address (${seen.size} ids this hour); more players from it are not recorded`);
+      capLogged.add(address);
+      return false;
+    }
     seen.set(anon, now);
     return true;
   }
@@ -176,8 +188,19 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     const p = h.play.get(pid);
     if (p === undefined || p.endedAt !== null) return;
     p.endedAt = Date.now();
+    tabSessions.set(`${p.tags.anon}:${p.client}`, { n: p.n, endedAt: p.endedAt });
     emit(p.tags, h.room.code, "session_end", { duration_s: Math.round((p.endedAt - p.startedAt) / 1000) });
   }
+
+  /** Session number for a tab starting on a new seat: the same one after a short break, the next after a long one. */
+  function tabSession(anon: string, client: string, now: number): number {
+    const last = tabSessions.get(`${anon}:${client}`);
+    const n = last === undefined ? 1 : last.endedAt !== null && now - last.endedAt >= SESSION_GAP_MS ? last.n + 1 : last.n;
+    tabSessions.set(`${anon}:${client}`, { n, endedAt: null });
+    return n;
+  }
+
+  const sessionId = (client: string, n: number): string => (n === 1 ? client : `${client}.${n}`);
 
   /** A connection took the seat: carry on its session, or start one. */
   function startPlay(h: Hosted, pid: string, hello: { anon: string | null; session: string | null; source: string | null }, address: string, created: boolean, rejoined: boolean): void {
@@ -187,19 +210,21 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     if (client === null) return;
     if (prev === undefined) {
       if (hello.anon === null || !mayTrack(address, hello.anon)) return;
-      h.play.set(pid, { tags: { anon: hello.anon, session: client, source: hello.source }, client, n: 1, startedAt: now, endedAt: null });
+      const n = tabSession(hello.anon, client, now);
+      h.play.set(pid, { tags: { anon: hello.anon, session: sessionId(client, n), source: hello.source }, client, n, startedAt: now, endedAt: null });
       emit(h.play.get(pid)!.tags, h.room.code, "session_start", { created, rejoined });
       return;
     }
     // Same tab back after a short drop, or a new socket while the old one is still open: same session.
     if (client === prev.client && (prev.endedAt === null || now - prev.endedAt < SESSION_GAP_MS)) {
       prev.endedAt = null;
+      tabSessions.set(`${prev.tags.anon}:${prev.client}`, { n: prev.n, endedAt: null });
       return;
     }
     endPlay(h, pid);
-    const n = client === prev.client ? prev.n + 1 : 1;
+    const n = tabSession(prev.tags.anon, client, now);
     // The seat keeps its anonymous id and group whatever the new hello claims.
-    prev.tags = { anon: prev.tags.anon, session: n === 1 ? client : `${client}.${n}`, source: prev.tags.source };
+    prev.tags = { anon: prev.tags.anon, session: sessionId(client, n), source: prev.tags.source };
     prev.client = client;
     prev.n = n;
     prev.startedAt = now;
@@ -300,8 +325,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     for (const h of hosted.values()) for (const pid of [...h.play.keys()]) if (!h.room.players.has(pid)) h.play.delete(pid);
     for (const [address, seen] of anonsSeen) {
       for (const [a, t] of seen) if (now - t > 3600_000) seen.delete(a);
-      if (seen.size === 0) anonsSeen.delete(address);
+      if (seen.size === 0) {
+        anonsSeen.delete(address);
+        capLogged.delete(address);
+      }
     }
+    for (const [k, s] of tabSessions) if (s.endedAt !== null && now - s.endedAt > 24 * 3600_000) tabSessions.delete(k);
   }, 30_000);
 
   function serveStatic(req: IncomingMessage, res: ServerResponse): void {

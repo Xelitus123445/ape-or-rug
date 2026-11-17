@@ -635,7 +635,10 @@ export class Room {
         if (p.ledger.balance >= DEFAULT_CONFIG.minStake || p.ledger.positions.some((x) => x.open)) return "not_broke";
         // A top-up, not a new ledger: closed bags on a coin that is still live keep counting for that
         // coin's result. The play money handed out is counted by `refills` on the board.
-        p.ledger.balance = START_BALANCE;
+        // The house hands the play money over, so balance + house stays constant for the ledger.
+        const handed = START_BALANCE - p.ledger.balance;
+        p.ledger.balance += handed;
+        p.ledger.house -= handed;
         p.refills++;
         this.#dirtyMe.add(p.id);
         return null;
